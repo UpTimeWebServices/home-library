@@ -1,0 +1,107 @@
+---
+import Layout from '@/layouts/Layout.astro';
+import { db } from '@/lib/db';
+
+const user = Astro.locals.user;
+const { results: unmatched } = await db()
+  .prepare(
+    `SELECT s.name, s.sync_note FROM series s
+      WHERE s.status = 'tracking' AND s.hardcover_id IS NULL AND s.last_checked IS NOT NULL
+        AND EXISTS (SELECT 1 FROM works w JOIN sections sec ON sec.name = w.section WHERE w.series_id = s.id AND sec.recommend = 1)
+      ORDER BY s.name COLLATE NOCASE`,
+  )
+  .all<{ name: string; sync_note: string | null }>();
+---
+
+<Layout title="More">
+  <div class="wrap max-w-2xl space-y-8 py-6">
+    <section>
+      <h1 class="font-serif text-2xl font-semibold">Settings</h1>
+      <p class="mt-1 text-ink-soft">Signed in as {user?.name} ({user?.email})</p>
+    </section>
+
+    <section aria-labelledby="hc" class="rounded-lg border border-rule bg-card p-5">
+      <h2 id="hc" class="font-serif text-xl font-semibold">Hardcover series data</h2>
+      <p class="mt-1 text-sm text-ink-soft">
+        Hardcover supplies the full book list for each series you own, which powers the recommended wishlist and fills in the series when you scan a book.
+        Children's and Graphic Novels/Manga series are skipped.
+      </p>
+      <dl id="hc-status" class="mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+        <dt class="text-ink-soft">Connection</dt><dd id="hc-conn">Checking…</dd>
+        <dt class="text-ink-soft">Series to track</dt><dd id="hc-eligible">…</dd>
+        <dt class="text-ink-soft">Matched on Hardcover</dt><dd id="hc-matched">…</dd>
+        <dt class="text-ink-soft">Due for a refresh</dt><dd id="hc-due">…</dd>
+      </dl>
+      <button type="button" id="sync" disabled class="mt-4 rounded-lg bg-green px-4 py-2.5 font-medium text-paper disabled:opacity-50">Sync series now</button>
+      <p class="mt-2 text-xs text-ink-soft">Each series is re-checked weekly so new releases show up. A full sync takes a few minutes; keep this page open.</p>
+      <ol id="sync-log" class="mt-3 max-h-64 space-y-0.5 overflow-y-auto text-sm"></ol>
+    </section>
+
+    {unmatched.length > 0 && (
+      <section aria-labelledby="nm">
+        <h2 id="nm" class="font-serif text-xl font-semibold">Series Hardcover couldn't match</h2>
+        <p class="mt-1 text-sm text-ink-soft">These won't get recommendations. Usually the series has a different name on Hardcover, or it isn't listed there.</p>
+        <ul class="mt-3 divide-y divide-rule rounded-lg border border-rule bg-card text-sm">
+          {unmatched.map((s) => (
+            <li class="flex justify-between gap-4 px-4 py-2"><a href={`/?q=${encodeURIComponent(s.name)}`} class="hover:text-green">{s.name}</a><span class="text-right text-ink-soft">{s.sync_note}</span></li>
+          ))}
+        </ul>
+      </section>
+    )}
+  </div>
+</Layout>
+
+<script>
+  interface Status { configured: boolean; user: string | null; error: string | null; sync: { eligible: number; matched: number; unmatched: number; due: number } }
+  const $ = (id: string) => document.getElementById(id)!;
+  const btn = $('sync') as HTMLButtonElement;
+  const log = $('sync-log');
+
+  function show(s: Status['sync']) {
+    $('hc-eligible').textContent = String(s.eligible);
+    $('hc-matched').textContent = `${s.matched}${s.unmatched ? ` (${s.unmatched} not found)` : ''}`;
+    $('hc-due').textContent = String(s.due);
+  }
+
+  async function load() {
+    const s = (await (await fetch('/api/hardcover/status')).json()) as Status;
+    show(s.sync);
+    if (!s.configured) $('hc-conn').textContent = 'Not set up. Add the token with: npx wrangler secret put HARDCOVER_TOKEN';
+    else if (s.error) $('hc-conn').textContent = `Error: ${s.error}`;
+    else {
+      $('hc-conn').textContent = `Connected as ${s.user ?? 'your account'}`;
+      btn.disabled = s.sync.due === 0;
+      if (s.sync.due === 0) btn.textContent = 'All series are up to date';
+    }
+  }
+
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    btn.textContent = 'Syncing…';
+    for (;;) {
+      const res = await fetch('/api/series/sync', { method: 'POST' });
+      const j = (await res.json().catch(() => ({ error: `HTTP ${res.status}` }))) as { results?: { series: string; ok: boolean; note: string; entries?: number }[]; status?: Status['sync']; stopped?: boolean; error?: string };
+      if (!res.ok || !j.results) {
+        log.insertAdjacentHTML('beforeend', `<li class="text-[#a23b2a]">${j.error ?? 'Sync failed.'}</li>`);
+        break;
+      }
+      for (const r of j.results) {
+        const li = document.createElement('li');
+        li.className = r.ok ? '' : 'text-ink-soft';
+        li.textContent = `${r.series}: ${r.note}${r.entries ? `, ${r.entries} books` : ''}`;
+        log.append(li);
+      }
+      log.scrollTop = log.scrollHeight;
+      if (j.status) show(j.status);
+      if (j.stopped) {
+        log.insertAdjacentHTML('beforeend', '<li class="text-[#a23b2a]">Stopped: Hardcover didn\'t answer. Try again in a minute.</li>');
+        break;
+      }
+      if (!j.results.length || !j.status?.due) break;
+    }
+    btn.textContent = 'Done';
+    void load();
+  });
+
+  void load();
+</script>

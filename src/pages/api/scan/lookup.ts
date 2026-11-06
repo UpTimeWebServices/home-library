@@ -4,7 +4,8 @@
  */
 import type { APIRoute } from 'astro';
 import { db } from '@/lib/db';
-import { lastNameKey, sectionFromSubjects, toIsbn13 } from '@/lib/books';
+import { lastNameKey, sectionFromSubjects, titleKey, toIsbn13 } from '@/lib/books';
+import { hardcoverConfigured, seriesForIsbn } from '@/lib/hardcover';
 import { json } from '@/lib/http';
 import { lookupIsbn, searchTitle } from '@/lib/lookup';
 import { matchBook } from '@/lib/match';
@@ -21,6 +22,21 @@ async function authorSection(authorSort: string | null): Promise<string | null> 
   return results[0]?.section ?? null;
 }
 
+/** Series + number from Hardcover, using your existing series name when it's the same series. */
+async function seriesSuggestion(isbn: string): Promise<{ name: string; position: number | null } | null> {
+  if (!hardcoverConfigured()) return null;
+  try {
+    const hit = await seriesForIsbn(isbn);
+    const first = hit?.series[0];
+    if (!first) return null;
+    const { results } = await db().prepare('SELECT name, hardcover_id FROM series').all<{ name: string; hardcover_id: number | null }>();
+    const mine = results.find((r) => r.hardcover_id === first.id) ?? results.find((r) => titleKey(r.name) === titleKey(first.name));
+    return { name: mine?.name ?? first.name, position: first.position };
+  } catch {
+    return null; // Hardcover being down never blocks a scan
+  }
+}
+
 export const GET: APIRoute = async ({ url }) => {
   const q = url.searchParams.get('q')?.trim();
   if (q) return json({ results: q.length < 2 ? [] : await searchTitle(q) });
@@ -32,5 +48,5 @@ export const GET: APIRoute = async ({ url }) => {
   const found = await lookupIsbn(isbn);
   const match = await matchBook({ isbn, title: found?.title ?? '', authorSort: found?.authorSort ?? null });
   const suggestedSection = found ? (await authorSection(found.authorSort)) ?? sectionFromSubjects(found.subjects) : null;
-  return json({ isbn, found, suggestedSection, ...match });
+  return json({ isbn, found, suggestedSection, seriesSuggestion: await seriesSuggestion(isbn), ...match });
 };

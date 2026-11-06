@@ -63,6 +63,7 @@ const mode = ['verify', 'add', 'check'].includes(Astro.url.searchParams.get('mod
     isbn: string | null;
     found: Found | null;
     suggestedSection: string | null;
+    seriesSuggestion?: { name: string; position: number | null } | null;
     owned: CopyHit[];
     candidates: WorkHit[];
     error?: string;
@@ -335,8 +336,8 @@ const mode = ['verify', 'add', 'check'].includes(Astro.url.searchParams.get('mod
           </select>
           ${section ? `<span class="mt-1 block text-xs font-normal text-ink-soft">Suggested from the author's other books or the subject. Change it if it belongs elsewhere.</span>` : ''}</label>
         <div class="grid grid-cols-[1fr_6rem] gap-2">
-          <label class="block text-sm font-medium">Series <span class="font-normal text-ink-soft">(optional)</span><input name="series" list="series-list" class="${field}"></label>
-          <label class="block text-sm font-medium">Number<input name="seriesPos" inputmode="decimal" class="${field}"></label>
+          <label class="block text-sm font-medium">Series <span class="font-normal text-ink-soft">(optional)</span><input name="series" list="series-list" class="${field}" value="${esc(l.seriesSuggestion?.name ?? '')}"></label>
+          <label class="block text-sm font-medium">Number<input name="seriesPos" inputmode="decimal" class="${field}" value="${esc(l.seriesSuggestion?.position ?? '')}"></label>
         </div>`}
         <fieldset class="flex flex-wrap gap-x-5 gap-y-2 text-sm">
           <legend class="sr-only">Edition</legend>

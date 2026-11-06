@@ -12,6 +12,7 @@ const path = Astro.url.pathname;
 const nav = [
   { href: '/', label: 'Library', active: path === '/' || path.startsWith('/book') },
   { href: '/scan', label: 'Scan', active: path.startsWith('/scan') },
+  { href: '/more', label: 'More', active: path.startsWith('/more') },
 ];
 ---
 

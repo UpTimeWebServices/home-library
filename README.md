@@ -20,6 +20,18 @@ Live at **https://home-library.aron-da0.workers.dev** (Access sign-in required).
 
 Filing uses the planned layout (Destination Map): section shelves in order, author last name, series in reading order, then title.
 
+## Hardcover (series data)
+
+Series lists come from the Hardcover GraphQL API (server-side only; 60 requests/minute; tokens expire every January 1).
+
+```bash
+npx wrangler secret put HARDCOVER_TOKEN   # paste the token from hardcover.app/account/api
+npm run db:migrate                        # adds 0002_hardcover.sql
+npm run deploy
+```
+
+Then open **More → Sync series now**. Each owned series (except Children's and Graphic Novels/Manga) is matched on Hardcover and its book list stored in `series_entries`; series are re-checked weekly. Scanning a book in Add mode also pre-fills its series and number from Hardcover.
+
 ## First deploy (one time)
 
 ```bash
