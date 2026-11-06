@@ -13,6 +13,8 @@
 			"migrations_dir": "db/migrations"
 		}
 	],
+	// Uploaded cover photos (private; served through /api/cover-image behind Access)
+	"r2_buckets": [{ "binding": "COVERS", "bucket_name": "home-library-covers" }],
 	"vars": {
 		// Cloudflare Access: team domain + application AUD tag. Empty = auth off (local dev only).
 		"ACCESS_TEAM_DOMAIN": "sparkling-limit-d352.cloudflareaccess.com",

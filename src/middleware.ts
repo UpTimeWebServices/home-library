@@ -9,17 +9,18 @@ import { userName, verifyAccessJwt } from './lib/auth';
  * 1. Worker-level Access (Workers & Pages → home-library → Access) hands the Worker `ctx.access`,
  *    already verified by Cloudflare: we check its audience and read the identity.
  * 2. Fallback: hostname-based Access only adds the `Cf-Access-Jwt-Assertion` header, which we verify.
- * If Access isn't configured, only `astro dev` is let in — production fails closed.
+ * Local `astro dev` skips the check; production fails closed if Access isn't configured.
  */
 export const onRequest = defineMiddleware(async (ctx, next) => {
   const team = env.ACCESS_TEAM_DOMAIN?.trim();
   const aud = env.ACCESS_AUD?.trim();
 
+  // Local `astro dev` has no Access in front of it.
+  if (import.meta.env.DEV) {
+    ctx.locals.user = { email: 'dev@local', name: 'Aron (dev)' };
+    return next();
+  }
   if (!team || !aud) {
-    if (import.meta.env.DEV) {
-      ctx.locals.user = { email: 'dev@local', name: 'Aron (dev)' };
-      return next();
-    }
     return new Response('Sign-in is not configured yet (ACCESS_TEAM_DOMAIN / ACCESS_AUD).', { status: 503 });
   }
 

@@ -8,7 +8,7 @@ Live at **https://home-library.aron-da0.workers.dev** (Access sign-in required).
 
 - Library: search by title, author or series; filter by section, special editions, duplicates, series, re-file moves; sort by author, title or shelf; cover grid or list.
 - Book page: every copy's current location and where it moves in the re-file, flags, notes, other books from the series you own.
-- Covers: looked up from Open Library by title + author the first time a book scrolls into view (best guess until the book is scanned).
+- Covers: looked up from Open Library by title + author the first time a book scrolls into view. On any book page you can replace it with your own photo (stored in the `home-library-covers` R2 bucket).
 
 ## First deploy (one time)
 

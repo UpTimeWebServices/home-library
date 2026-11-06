@@ -43,8 +43,9 @@ export const sectionCloth: Record<string, string> = {
 
 export const clothFor = (section: string | null): string => (section && sectionCloth[section]) || '#4b5d54';
 
-export const coverUrl = (coverId: number | null, size: 'S' | 'M' | 'L' = 'M'): string | null =>
-  coverId ? `https://covers.openlibrary.org/b/id/${coverId}-${size}.jpg` : null;
+/** Your own uploaded photo wins; otherwise the Open Library cover, if one was found. */
+export const coverUrl = (coverId: number | null, size: 'S' | 'M' | 'L' = 'M', custom: string | null = null): string | null =>
+  custom ?? (coverId ? `https://covers.openlibrary.org/b/id/${coverId}-${size}.jpg` : null);
 
 export function seriesPos(n: number | null): string {
   if (n === null || n === undefined) return '';

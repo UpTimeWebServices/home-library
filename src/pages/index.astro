@@ -154,7 +154,7 @@ const data = JSON.stringify(rows).replace(/</g, '\\u003c');
   let shown = 0;
 
   function cover(r: LibRow, small = false): string {
-    const url = coverUrl(r[8], 'M');
+    const url = coverUrl(r[8], 'M', r[16]);
     const placeholder = `
       <div class="cloth absolute inset-0 flex flex-col justify-between p-2 text-white" style="--cloth:${clothFor(r[5])}">
         <span class="${small ? 'hidden' : ''} font-serif text-[0.78rem] font-semibold leading-tight line-clamp-5 sm:text-sm">${esc(r[1])}</span>

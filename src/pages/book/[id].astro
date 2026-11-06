@@ -8,7 +8,8 @@ const detail = Number.isInteger(id) ? await workDetail(id) : null;
 if (!detail) return new Response('Book not found', { status: 404 });
 
 const { work, copies, siblings } = detail;
-const cover = coverUrl(work.cover_id, 'L');
+const cover = coverUrl(work.cover_id, 'L', work.cover_url);
+const ownPhoto = !!work.cover_url;
 const cloth = clothFor(work.section);
 const multi = copies.length > 1;
 
@@ -39,11 +40,20 @@ const flagText = (c: (typeof copies)[number]) =>
             <span class="font-serif text-lg font-semibold leading-tight">{work.title}</span>
             <span class="text-xs opacity-80">{work.author}</span>
           </div>
-          {cover && <img src={cover} alt={`Cover of ${work.title}`} class="absolute inset-0 size-full object-cover" onerror="this.remove()" />}
+          {cover && <img id="cover-img" src={cover} alt={`Cover of ${work.title}`} class="absolute inset-0 size-full object-cover" onerror="this.remove()" />}
+          <div id="cover-busy" hidden class="absolute inset-0 grid place-items-center bg-black/45 text-sm font-medium text-white">Uploading…</div>
         </div>
-        {work.cover_status === 'found' && (
-          <p class="mt-2 text-xs text-ink-soft">Cover is a best match from Open Library. Scanning the book will replace it with your edition.</p>
-        )}
+
+        <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+          <label class="cursor-pointer font-medium text-green hover:underline">
+            {ownPhoto ? 'Replace cover photo' : 'Use my own cover photo'}
+            <input id="cover-file" type="file" accept="image/*" class="sr-only" />
+          </label>
+          {ownPhoto && <button type="button" id="cover-remove" class="text-ink-soft hover:text-ink hover:underline">Remove photo</button>}
+        </div>
+        <p id="cover-msg" class="mt-1 text-xs text-ink-soft" aria-live="polite">
+          {work.cover_status === 'found' && !ownPhoto && 'Cover is a best match from Open Library. If it is the wrong edition, add a photo of yours.'}
+        </p>
       </div>
 
       <div class="min-w-0">
@@ -110,7 +120,7 @@ const flagText = (c: (typeof copies)[number]) =>
                   <a href={`/book/${s.id}`} aria-current={s.id === work.id ? 'page' : undefined} class="group block">
                     <div class="cloth relative aspect-[2/3] overflow-hidden rounded-[3px] group-aria-[current=page]:ring-2 group-aria-[current=page]:ring-brass" style={`--cloth:${clothFor(s.section)}`}>
                       <span class="absolute inset-1.5 font-serif text-[0.6rem] font-semibold leading-tight text-white line-clamp-6">{s.title}</span>
-                      {s.cover_id && <img src={coverUrl(s.cover_id, 'S')} alt="" loading="lazy" class="absolute inset-0 size-full object-cover" onerror="this.remove()" />}
+                      {(s.cover_url || s.cover_id) && <img src={coverUrl(s.cover_id, 'S', s.cover_url)} alt="" loading="lazy" class="absolute inset-0 size-full object-cover" onerror="this.remove()" />}
                     </div>
                     <span class="mt-1 block text-xs text-ink-soft">{s.series_pos !== null ? `#${s.series_pos}` : 'Unnumbered'}</span>
                   </a>
@@ -132,20 +142,74 @@ const flagText = (c: (typeof copies)[number]) =>
     back.addEventListener('click', (e) => { e.preventDefault(); history.back(); });
   }
 
-  // Look up a cover if this row hasn't been searched yet.
   const box = document.getElementById('cover') as HTMLElement;
+  const id = box.dataset.id;
+
+  function showCover(url: string) {
+    let img = document.getElementById('cover-img') as HTMLImageElement | null;
+    if (!img) {
+      img = new Image();
+      img.id = 'cover-img';
+      img.alt = '';
+      img.className = 'absolute inset-0 size-full object-cover';
+      img.onerror = () => img?.remove();
+      box.insertBefore(img, document.getElementById('cover-busy'));
+    }
+    img.src = url;
+  }
+
+  // Look up a cover if this row hasn't been searched yet.
   if (box.dataset.status === 'pending') {
-    fetch(`/api/cover/${box.dataset.id}`)
+    fetch(`/api/cover/${id}`)
       .then((r) => (r.ok ? r.json() : null))
-      .then((j: { coverId: number | null } | null) => {
-        if (!j?.coverId) return;
-        const img = new Image();
-        img.alt = '';
-        img.className = 'absolute inset-0 size-full object-cover';
-        img.onerror = () => img.remove();
-        img.src = `https://covers.openlibrary.org/b/id/${j.coverId}-L.jpg`;
-        box.append(img);
+      .then((j) => {
+        const coverId = (j as { coverId: number | null } | null)?.coverId;
+        if (coverId) showCover(`https://covers.openlibrary.org/b/id/${coverId}-L.jpg`);
       })
       .catch(() => {});
   }
+
+  // ---- your own cover photo ----
+  const fileEl = document.getElementById('cover-file') as HTMLInputElement;
+  const busy = document.getElementById('cover-busy') as HTMLElement;
+  const msg = document.getElementById('cover-msg') as HTMLElement;
+
+  /** Shrink a phone photo (often 4–12 MB) to ~1000px on the long side before uploading. */
+  async function shrink(file: File): Promise<Blob> {
+    const bmp = await createImageBitmap(file);
+    const scale = Math.min(1, 1000 / Math.max(bmp.width, bmp.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(bmp.width * scale);
+    canvas.height = Math.round(bmp.height * scale);
+    canvas.getContext('2d')!.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+    return new Promise((res, rej) => canvas.toBlob((b) => (b ? res(b) : rej(new Error('encode'))), 'image/jpeg', 0.85));
+  }
+
+  fileEl.addEventListener('change', async () => {
+    const file = fileEl.files?.[0];
+    if (!file) return;
+    busy.hidden = false;
+    msg.textContent = '';
+    try {
+      const blob = await shrink(file).catch(() => file);
+      const form = new FormData();
+      form.append('file', blob, 'cover.jpg');
+      const res = await fetch(`/api/cover/${id}`, { method: 'POST', body: form });
+      const j = (await res.json().catch(() => ({}))) as { coverUrl?: string; error?: string };
+      if (!res.ok || !j.coverUrl) throw new Error(j.error ?? `Upload failed (${res.status}).`);
+      showCover(j.coverUrl);
+      location.reload();
+    } catch (e) {
+      msg.textContent = e instanceof Error ? e.message : 'Upload failed. Try again.';
+    } finally {
+      busy.hidden = true;
+      fileEl.value = '';
+    }
+  });
+
+  document.getElementById('cover-remove')?.addEventListener('click', async () => {
+    const res = await fetch(`/api/cover/${id}`, { method: 'DELETE' });
+    if (res.ok) location.reload();
+    else msg.textContent = 'Could not remove the photo. Try again.';
+  });
 </script>

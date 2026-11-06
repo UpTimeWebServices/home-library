@@ -5,12 +5,13 @@ export const db = (): D1Database => env.DB;
 /**
  * Compact row for the library grid, sent to the browser as JSON.
  * Tuple keeps ~1,400 rows small: [id, title, author, sortTitle, authorSort, section,
- * series, seriesPos, coverId, coverStatus, room, case, shelf, copies, special(0-2), moves(0/1)]
+ * series, seriesPos, coverId, coverStatus, room, case, shelf, copies, special(0-2), moves(0/1), coverUrl]
  */
 export type LibRow = [
   number, string, string | null, string, string | null, string | null,
   string | null, number | null, number | null, string,
   string | null, string | null, string | null, number, number, number,
+  string | null,
 ];
 
 export async function libraryRows(): Promise<LibRow[]> {
@@ -22,7 +23,8 @@ export async function libraryRows(): Promise<LibRow[]> {
               (SELECT COUNT(*) FROM copies c WHERE c.work_id = w.id) AS n,
               (SELECT MAX(CASE c.special WHEN 'confirmed' THEN 2 WHEN 'suspected' THEN 1 ELSE 0 END)
                  FROM copies c WHERE c.work_id = w.id) AS sp,
-              (c1.planned_shelf_id IS NOT NULL AND c1.planned_shelf_id <> c1.shelf_id) AS moves
+              (c1.planned_shelf_id IS NOT NULL AND c1.planned_shelf_id <> c1.shelf_id) AS moves,
+              w.cover_url
          FROM works w
          LEFT JOIN series s ON s.id = w.series_id
          LEFT JOIN copies c1 ON c1.id = (SELECT MIN(id) FROM copies WHERE work_id = w.id)
@@ -43,6 +45,7 @@ export interface WorkDetail {
   series_pos: number | null;
   cover_id: number | null;
   cover_status: string;
+  cover_url: string | null;
   notes: string | null;
   created_by: string | null;
   created_at: string;
@@ -94,13 +97,13 @@ export async function workDetail(id: number) {
         WHERE c.work_id = ? ORDER BY c.id`,
     ).bind(id),
     d.prepare(
-      `SELECT id, title, series_pos, cover_id, section FROM works
+      `SELECT id, title, series_pos, cover_id, cover_url, section FROM works
         WHERE series_id = ? ORDER BY series_pos IS NULL, series_pos, sort_title`,
     ).bind(work.series_id ?? -1),
   ]);
   return {
     work,
     copies: (copies?.results ?? []) as unknown as CopyDetail[],
-    siblings: (siblings?.results ?? []) as unknown as { id: number; title: string; series_pos: number | null; cover_id: number | null; section: string | null }[],
+    siblings: (siblings?.results ?? []) as unknown as { id: number; title: string; series_pos: number | null; cover_id: number | null; cover_url: string | null; section: string | null }[],
   };
 }
