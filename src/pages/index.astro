@@ -1,0 +1,283 @@
+---
+import Layout from '@/layouts/Layout.astro';
+import { db, libraryRows } from '@/lib/db';
+import { clothFor } from '@/lib/format';
+
+const rows = await libraryRows();
+const { results: sections } = await db()
+  .prepare(
+    `SELECT s.name, COUNT(w.id) AS n FROM sections s LEFT JOIN works w ON w.section = s.name
+      GROUP BY s.name HAVING n > 0 ORDER BY n DESC`,
+  )
+  .all<{ name: string; n: number }>();
+
+const data = JSON.stringify(rows).replace(/</g, '\\u003c');
+---
+
+<Layout>
+  <div class="sticky top-0 z-30 border-b border-rule bg-paper/95 backdrop-blur supports-[backdrop-filter]:bg-paper/85">
+    <div class="wrap pt-2.5 pb-2">
+      <label class="relative block">
+        <span class="sr-only">Search the library</span>
+        <svg aria-hidden="true" viewBox="0 0 20 20" class="pointer-events-none absolute left-3.5 top-1/2 size-5 -translate-y-1/2 text-ink-soft"><path fill="currentColor" d="M8.5 3a5.5 5.5 0 0 1 4.38 8.83l3.65 3.64a.75.75 0 1 1-1.06 1.06l-3.64-3.65A5.5 5.5 0 1 1 8.5 3Zm0 1.5a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z"/></svg>
+        <input
+          id="q"
+          type="search"
+          inputmode="search"
+          autocomplete="off"
+          enterkeyhint="search"
+          placeholder="Title, author or series"
+          class="h-11 w-full rounded-lg border border-rule bg-card pl-11 pr-4 text-base text-ink placeholder:text-ink-soft/80 focus:border-green focus:outline-none focus:ring-2 focus:ring-green/25"
+        />
+      </label>
+
+      <div id="sections" class="-mx-4 mt-2.5 flex gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none] sm:-mx-6 sm:px-6" role="group" aria-label="Section">
+        <button type="button" class="chip" data-section="" aria-pressed="true">All sections</button>
+        {sections.map((s) => (
+          <button type="button" class="chip flex items-center gap-2" data-section={s.name} aria-pressed="false">
+            <span class="size-2.5 rounded-full" style={`background:${clothFor(s.name)}`} aria-hidden="true"></span>
+            {s.name}
+          </button>
+        ))}
+      </div>
+
+      <div class="mt-2 flex items-center gap-2 text-sm">
+        <p id="count" class="mr-auto whitespace-nowrap text-ink-soft" aria-live="polite"></p>
+        <select id="filter" aria-label="Show" class="min-w-0 rounded-md border border-rule bg-card py-1 pl-2 pr-1 text-ink">
+          <option value="">Everything</option>
+          <option value="special">Special editions</option>
+          <option value="dupes">More than one copy</option>
+          <option value="series">In a series</option>
+          <option value="moves">Moving in the re-file</option>
+        </select>
+        <select id="sort" aria-label="Sort" class="rounded-md border border-rule bg-card py-1 pl-2 pr-1 text-ink">
+          <option value="author">By author</option>
+          <option value="title">By title</option>
+          <option value="shelf">By shelf</option>
+        </select>
+        <div class="flex shrink-0 overflow-hidden rounded-md border border-rule" role="group" aria-label="View">
+          <button type="button" id="view-grid" title="Covers" class="px-2 py-1.5 text-ink-soft aria-pressed:bg-green aria-pressed:text-paper" aria-pressed="true">
+            <span class="sr-only">Covers</span>
+            <svg aria-hidden="true" viewBox="0 0 16 16" class="size-4"><path fill="currentColor" d="M1 1h4v6H1zm5 0h4v6H6zm5 0h4v6h-4zM1 9h4v6H1zm5 0h4v6H6zm5 0h4v6h-4z"/></svg>
+          </button>
+          <button type="button" id="view-list" title="List" class="border-l border-rule px-2 py-1.5 text-ink-soft aria-pressed:bg-green aria-pressed:text-paper" aria-pressed="false">
+            <span class="sr-only">List</span>
+            <svg aria-hidden="true" viewBox="0 0 16 16" class="size-4"><path fill="currentColor" d="M1 2h3v3H1zm4 .5h10v2H5zM1 6.5h3v3H1zm4 .5h10v2H5zM1 11h3v3H1zm4 .5h10v2H5z"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="wrap py-5">
+    <ol id="results" class="grid grid-cols-3 gap-x-3 gap-y-6 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6"></ol>
+    <div id="empty" hidden class="mx-auto max-w-md py-16 text-center">
+      <p class="font-serif text-2xl">Not in the library</p>
+      <p class="mt-2 text-ink-soft">Nothing matches that search. Check the spelling, or try just the author's last name.</p>
+    </div>
+    <div id="more" class="h-10"></div>
+  </div>
+
+  <script type="application/json" id="lib-data" set:html={data} />
+</Layout>
+
+<script>
+  import { clothFor, coverUrl, placeText } from '@/lib/format';
+  import type { LibRow } from '@/lib/db';
+
+  const rows = JSON.parse(document.getElementById('lib-data')!.textContent!) as LibRow[];
+  const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+  const qEl = $<HTMLInputElement>('q');
+  const filterEl = $<HTMLSelectElement>('filter');
+  const sortEl = $<HTMLSelectElement>('sort');
+  const results = $<HTMLOListElement>('results');
+  const countEl = $('count');
+  const emptyEl = $('empty');
+  const moreEl = $('more');
+  const gridBtn = $('view-grid');
+  const listBtn = $('view-list');
+  const chips = [...document.querySelectorAll<HTMLButtonElement>('#sections [data-section]')];
+
+  const norm = (s: string | null) => (s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const esc = (s: string | null) => (s ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+  const hay = rows.map((r) => norm([r[1], r[2], r[4], r[6]].join(' ')));
+  const byId = new Map(rows.map((r) => [r[0], r]));
+  const shelfOrder = new Map(rows.map((r, i) => [r[0], i]));
+
+  // ---- state (kept in the URL so Back from a book returns to the same view) ----
+  const params = new URLSearchParams(location.search);
+  const state = {
+    q: params.get('q') ?? '',
+    section: params.get('s') ?? '',
+    filter: params.get('f') ?? '',
+    sort: params.get('sort') ?? 'author',
+    view: params.get('view') ?? (() => { try { return localStorage.getItem('view'); } catch { return null; } })() ?? 'grid',
+  };
+  qEl.value = state.q;
+  filterEl.value = state.filter;
+  sortEl.value = state.sort;
+
+  function syncUrl() {
+    const p = new URLSearchParams();
+    if (state.q) p.set('q', state.q);
+    if (state.section) p.set('s', state.section);
+    if (state.filter) p.set('f', state.filter);
+    if (state.sort !== 'author') p.set('sort', state.sort);
+    if (state.view !== 'grid') p.set('view', state.view);
+    history.replaceState(null, '', p.size ? `?${p}` : location.pathname);
+  }
+
+  // ---- filtering ----
+  let matched: LibRow[] = [];
+  function compute() {
+    const tokens = norm(state.q).split(/\s+/).filter(Boolean);
+    matched = rows.filter((r, i) => {
+      if (state.section && r[5] !== state.section) return false;
+      if (state.filter === 'special' && !r[14]) return false;
+      if (state.filter === 'dupes' && r[13] < 2) return false;
+      if (state.filter === 'series' && !r[6]) return false;
+      if (state.filter === 'moves' && !r[15]) return false;
+      return tokens.every((t) => hay[i]!.includes(t));
+    });
+    if (state.sort === 'title') matched.sort((a, b) => a[3].localeCompare(b[3], undefined, { sensitivity: 'base' }));
+    else if (state.sort === 'shelf') {
+      const key = (r: LibRow) => `${r[10] ?? ''}|${(r[11] ?? '').padStart(4, '0')}|${(r[12] ?? '').padStart(4, '0')}`;
+      matched.sort((a, b) => key(a).localeCompare(key(b)) || shelfOrder.get(a[0])! - shelfOrder.get(b[0])!);
+    }
+    const n = matched.length;
+    countEl.textContent = `${n.toLocaleString()} ${n === 1 ? 'title' : 'titles'}`;
+    emptyEl.hidden = n > 0;
+  }
+
+  // ---- rendering ----
+  const PAGE = 60;
+  let shown = 0;
+
+  function cover(r: LibRow, small = false): string {
+    const url = coverUrl(r[8], 'M');
+    const placeholder = `
+      <div class="cloth absolute inset-0 flex flex-col justify-between p-2 text-white" style="--cloth:${clothFor(r[5])}">
+        <span class="${small ? 'hidden' : ''} font-serif text-[0.78rem] font-semibold leading-tight line-clamp-5 sm:text-sm">${esc(r[1])}</span>
+        <span class="${small ? 'hidden' : 'text-[0.62rem]'} leading-tight opacity-80 line-clamp-2">${esc(r[2])}</span>
+      </div>`;
+    const img = url ? `<img src="${url}" alt="" loading="lazy" decoding="async" class="absolute inset-0 size-full object-cover" onerror="this.remove()">` : '';
+    return `<div class="relative aspect-[2/3] overflow-hidden rounded-[3px] bg-rule shadow-[0_1px_0_rgb(0_0_0/0.06),2px_3px_8px_-4px_rgb(0_0_0/0.35)]" data-cover="${r[0]}" data-status="${r[9]}">${placeholder}${img}</div>`;
+  }
+
+  function card(r: LibRow): string {
+    const href = `/book/${r[0]}`;
+    const series = r[6] ? `<span class="block truncate text-ink-soft">${esc(r[6])}${r[7] !== null ? ` #${r[7]}` : ''}</span>` : '';
+    const extra = [r[13] > 1 ? `${r[13]} copies` : '', r[14] === 2 ? 'Special' : r[14] === 1 ? 'Special?' : ''].filter(Boolean).join(', ');
+    const place = esc(placeText({ room: r[10], case_label: r[11], shelf_label: r[12] }));
+    if (state.view === 'list') {
+      return `<li><a href="${href}" class="flex items-start gap-3 border-b border-rule py-3 hover:bg-card">
+        <div class="w-10 shrink-0">${cover(r, true)}</div>
+        <div class="min-w-0 flex-1 text-sm">
+          <span class="block truncate font-serif text-base font-medium">${esc(r[1])}</span>
+          <span class="block truncate text-ink-soft">${esc(r[2])}</span>${series}
+          <span class="shelfmark mt-1">${place}</span>
+        </div>
+      </a></li>`;
+    }
+    return `<li><a href="${href}" class="group block">
+      ${cover(r)}
+      <span class="mt-2 block font-serif text-[0.92rem] font-medium leading-snug line-clamp-2 group-hover:text-green">${esc(r[1])}</span>
+      <span class="block truncate text-xs text-ink-soft">${esc(r[2])}</span>
+      <span class="shelfmark mt-1.5">${place}</span>
+      ${extra ? `<span class="mt-1 block text-[0.7rem] text-ink-soft">${extra}</span>` : ''}
+    </a></li>`;
+  }
+
+  function renderMore() {
+    const next = matched.slice(shown, shown + PAGE);
+    results.insertAdjacentHTML('beforeend', next.map(card).join(''));
+    shown += next.length;
+    results.querySelectorAll<HTMLElement>('[data-status="pending"]:not([data-watched])').forEach((el) => {
+      el.dataset.watched = '1';
+      coverObserver.observe(el);
+    });
+  }
+
+  function render() {
+    compute();
+    results.className =
+      state.view === 'list'
+        ? 'mx-auto max-w-3xl'
+        : 'grid grid-cols-3 gap-x-3 gap-y-6 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6';
+    results.innerHTML = '';
+    shown = 0;
+    renderMore();
+    chips.forEach((c) => c.setAttribute('aria-pressed', String(c.dataset.section === state.section)));
+    gridBtn.setAttribute('aria-pressed', String(state.view === 'grid'));
+    listBtn.setAttribute('aria-pressed', String(state.view === 'list'));
+    syncUrl();
+  }
+
+  new IntersectionObserver((e) => { if (e[0]?.isIntersecting && shown < matched.length) renderMore(); }, { rootMargin: '800px' }).observe(moreEl);
+
+  // ---- cover lookups: only for cards on screen, three at a time ----
+  const queue: number[] = [];
+  let active = 0;
+  const coverObserver = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue;
+      coverObserver.unobserve(e.target);
+      queue.push(Number((e.target as HTMLElement).dataset.cover));
+    }
+    pump();
+  }, { rootMargin: '200px' });
+
+  function pump() {
+    while (active < 3 && queue.length) {
+      const id = queue.shift()!;
+      const r = byId.get(id);
+      if (!r || r[9] !== 'pending') continue;
+      active++;
+      fetch(`/api/cover/${id}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((j: { coverId: number | null; status: string } | null) => {
+          if (!j || j.status === 'pending') return;
+          r[8] = j.coverId;
+          r[9] = j.status;
+          const url = coverUrl(j.coverId, 'M');
+          document.querySelectorAll<HTMLElement>(`[data-cover="${id}"]`).forEach((el) => {
+            el.dataset.status = j.status;
+            if (url && !el.querySelector('img')) {
+              const img = new Image();
+              img.alt = '';
+              img.className = 'absolute inset-0 size-full object-cover opacity-0 transition-opacity duration-300';
+              img.onload = () => img.classList.remove('opacity-0');
+              img.onerror = () => img.remove();
+              img.src = url;
+              el.append(img);
+            }
+          });
+        })
+        .catch(() => {})
+        .finally(() => { active--; pump(); });
+    }
+  }
+
+  // ---- events ----
+  let t: number | undefined;
+  qEl.addEventListener('input', () => {
+    clearTimeout(t);
+    t = window.setTimeout(() => { state.q = qEl.value.trim(); render(); }, 120);
+  });
+  chips.forEach((c) => c.addEventListener('click', () => {
+    state.section = c.dataset.section === state.section ? '' : c.dataset.section ?? '';
+    render();
+  }));
+  filterEl.addEventListener('change', () => { state.filter = filterEl.value; render(); });
+  sortEl.addEventListener('change', () => { state.sort = sortEl.value; render(); });
+  const setView = (v: string) => {
+    state.view = v;
+    try { localStorage.setItem('view', v); } catch {}
+    render();
+  };
+  gridBtn.addEventListener('click', () => setView('grid'));
+  listBtn.addEventListener('click', () => setView('list'));
+
+  render();
+  chips.find((c) => c.dataset.section === state.section && state.section)?.scrollIntoView({ inline: 'center', block: 'nearest' });
+</script>

@@ -1,0 +1,47 @@
+---
+import '@fontsource-variable/inter';
+import '@fontsource-variable/fraunces/full.css';
+import '../styles/global.css';
+
+interface Props {
+  title?: string;
+}
+const { title } = Astro.props;
+const user = Astro.locals.user;
+const path = Astro.url.pathname;
+const nav = [
+  { href: '/', label: 'Library', active: path === '/' || path.startsWith('/book') },
+];
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="theme-color" content="#24543f" />
+    <title>{title ? `${title} — Dream House Library` : 'Dream House Library'}</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body class="min-h-dvh">
+    <header class="border-b border-rule bg-paper/95 backdrop-blur supports-[backdrop-filter]:bg-paper/80">
+      <div class="wrap flex h-14 items-center justify-between gap-4">
+        <a href="/" class="font-serif text-xl font-semibold tracking-tight [font-variation-settings:'opsz'_72,'SOFT'_50]">
+          Dream House Library
+        </a>
+        <nav aria-label="Main" class="flex items-center gap-5 text-sm">
+          {nav.map((n) => (
+            <a href={n.href} aria-current={n.active ? 'page' : undefined} class:list={['hover:text-green', n.active ? 'font-semibold text-green' : 'text-ink-soft']}>
+              {n.label}
+            </a>
+          ))}
+          {user && <span class="text-ink-soft">{user.name}</span>}
+        </nav>
+      </div>
+    </header>
+    <main>
+      <slot />
+    </main>
+  </body>
+</html>

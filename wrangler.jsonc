@@ -1,0 +1,24 @@
+{
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "home-library",
+	"compatibility_date": "2026-09-30",
+	"compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+	"main": "@astrojs/cloudflare/entrypoints/server",
+	"assets": { "directory": "./dist", "binding": "ASSETS" },
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "home-library",
+			"database_id": "fbc55e51-1af4-4a77-9ef7-e0874bc31fcf",
+			"migrations_dir": "db/migrations"
+		}
+	],
+	"vars": {
+		// Cloudflare Access: team domain + application AUD tag. Empty = auth off (local dev only).
+		"ACCESS_TEAM_DOMAIN": "",
+		"ACCESS_AUD": "",
+		// Comma-separated email=Display Name pairs
+		"USERS": "aron@uptimewebservices.com=Aron,darlenedifrischia@yahoo.com=Darlene"
+	},
+	"observability": { "enabled": true }
+}

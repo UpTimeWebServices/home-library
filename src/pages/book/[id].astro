@@ -1,0 +1,151 @@
+---
+import Layout from '@/layouts/Layout.astro';
+import { workDetail } from '@/lib/db';
+import { clothFor, coverUrl, placeText, samePlace } from '@/lib/format';
+
+const id = Number(Astro.params.id);
+const detail = Number.isInteger(id) ? await workDetail(id) : null;
+if (!detail) return new Response('Book not found', { status: 404 });
+
+const { work, copies, siblings } = detail;
+const cover = coverUrl(work.cover_id, 'L');
+const cloth = clothFor(work.section);
+const multi = copies.length > 1;
+
+const flagText = (c: (typeof copies)[number]) =>
+  [
+    c.special === 'confirmed' ? 'Special edition' : c.special === 'suspected' ? 'Possibly special' : '',
+    c.first_edition ? 'First edition' : '',
+    c.signed ? 'Signed' : '',
+    c.bedroom_flag ? 'Bedroom shelf?' : '',
+    c.condition ?? '',
+  ].filter(Boolean);
+---
+
+<Layout title={work.title}>
+  <div class="wrap py-5 sm:py-8">
+    <a href="/" id="back" class="text-sm text-ink-soft hover:text-green">Back to library</a>
+
+    <div class="mt-4 grid gap-6 sm:grid-cols-[minmax(0,14rem)_1fr] sm:gap-10">
+      <div class="mx-auto w-40 sm:mx-0 sm:w-full">
+        <div
+          id="cover"
+          data-id={work.id}
+          data-status={work.cover_status}
+          class="cloth relative aspect-[2/3] overflow-hidden rounded-[3px] shadow-[2px_6px_18px_-8px_rgb(0_0_0/0.45)]"
+          style={`--cloth:${cloth}`}
+        >
+          <div class="absolute inset-0 flex flex-col justify-between p-3 text-white">
+            <span class="font-serif text-lg font-semibold leading-tight">{work.title}</span>
+            <span class="text-xs opacity-80">{work.author}</span>
+          </div>
+          {cover && <img src={cover} alt={`Cover of ${work.title}`} class="absolute inset-0 size-full object-cover" onerror="this.remove()" />}
+        </div>
+        {work.cover_status === 'found' && (
+          <p class="mt-2 text-xs text-ink-soft">Cover is a best match from Open Library. Scanning the book will replace it with your edition.</p>
+        )}
+      </div>
+
+      <div class="min-w-0">
+        <h1 class="font-serif text-3xl font-semibold leading-tight tracking-tight text-balance sm:text-4xl [font-variation-settings:'opsz'_96]">
+          {work.title}
+        </h1>
+        {work.author && <p class="mt-1 text-lg text-ink-soft">{work.author}</p>}
+        <p class="mt-3 flex flex-wrap items-center gap-2 text-sm">
+          {work.section && (
+            <a href={`/?s=${encodeURIComponent(work.section)}`} class="chip flex items-center gap-2">
+              <span class="size-2.5 rounded-full" style={`background:${cloth}`} aria-hidden="true"></span>{work.section}
+            </a>
+          )}
+          {work.series && (
+            <a href={`/?q=${encodeURIComponent(work.series)}`} class="chip">
+              {work.series}{work.series_pos !== null && ` #${work.series_pos}`}
+            </a>
+          )}
+        </p>
+
+        <section class="mt-6" aria-labelledby="where">
+          <h2 id="where" class="font-serif text-xl font-semibold">{multi ? `Where the ${copies.length} copies are` : 'Where it is'}</h2>
+          <ul class="mt-3 space-y-3">
+            {copies.map((c, i) => {
+              const now = { room: c.room, case_label: c.case_label, shelf_label: c.shelf_label };
+              const plan = { room: c.p_room, case_label: c.p_case_label, shelf_label: c.p_shelf_label };
+              const flags = flagText(c);
+              return (
+                <li class="rounded-md border border-rule bg-card p-4">
+                  {multi && <p class="mb-1 text-xs text-ink-soft">Copy {i + 1}</p>}
+                  <p class="text-lg font-medium text-brass">{placeText(now)}</p>
+                  {c.p_room && !samePlace(now, plan) && (
+                    <p class="mt-1 text-sm text-ink-soft">Moves to {placeText(plan)} in the re-file</p>
+                  )}
+                  {c.borrower && <p class="mt-2 text-sm font-medium">Loaned to {c.borrower} since {c.loaned_on}</p>}
+                  {flags.length > 0 && (
+                    <ul class="mt-2 flex flex-wrap gap-1.5 text-xs">
+                      {flags.map((f) => <li class="rounded-full bg-green-soft px-2 py-0.5 text-green">{f}</li>)}
+                    </ul>
+                  )}
+                  <p class="mt-2 text-xs text-ink-soft">
+                    {c.verified ? `ISBN ${c.isbn}` : 'From the catalog spreadsheet, not scanned yet'}
+                  </p>
+                  {c.notes && <p class="mt-2 text-sm">{c.notes}</p>}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+
+        {work.notes && (
+          <section class="mt-6">
+            <h2 class="font-serif text-xl font-semibold">Notes</h2>
+            <p class="mt-2 max-w-prose">{work.notes}</p>
+          </section>
+        )}
+
+        {siblings.length > 1 && (
+          <section class="mt-8" aria-labelledby="series">
+            <h2 id="series" class="font-serif text-xl font-semibold">In the library from {work.series}</h2>
+            <ol class="mt-3 flex gap-3 overflow-x-auto pb-2">
+              {siblings.map((s) => (
+                <li class="w-20 shrink-0">
+                  <a href={`/book/${s.id}`} aria-current={s.id === work.id ? 'page' : undefined} class="group block">
+                    <div class="cloth relative aspect-[2/3] overflow-hidden rounded-[3px] group-aria-[current=page]:ring-2 group-aria-[current=page]:ring-brass" style={`--cloth:${clothFor(s.section)}`}>
+                      <span class="absolute inset-1.5 font-serif text-[0.6rem] font-semibold leading-tight text-white line-clamp-6">{s.title}</span>
+                      {s.cover_id && <img src={coverUrl(s.cover_id, 'S')} alt="" loading="lazy" class="absolute inset-0 size-full object-cover" onerror="this.remove()" />}
+                    </div>
+                    <span class="mt-1 block text-xs text-ink-soft">{s.series_pos !== null ? `#${s.series_pos}` : 'Unnumbered'}</span>
+                  </a>
+                </li>
+              ))}
+            </ol>
+            <p class="text-sm text-ink-soft">Missing books in this series will show on the Wishlist once recommendations are built.</p>
+          </section>
+        )}
+      </div>
+    </div>
+  </div>
+</Layout>
+
+<script>
+  // Back keeps the library's search and filters when we came from it.
+  const back = document.getElementById('back') as HTMLAnchorElement;
+  if (document.referrer.startsWith(location.origin + '/') && !document.referrer.includes('/book/')) {
+    back.addEventListener('click', (e) => { e.preventDefault(); history.back(); });
+  }
+
+  // Look up a cover if this row hasn't been searched yet.
+  const box = document.getElementById('cover') as HTMLElement;
+  if (box.dataset.status === 'pending') {
+    fetch(`/api/cover/${box.dataset.id}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: { coverId: number | null } | null) => {
+        if (!j?.coverId) return;
+        const img = new Image();
+        img.alt = '';
+        img.className = 'absolute inset-0 size-full object-cover';
+        img.onerror = () => img.remove();
+        img.src = `https://covers.openlibrary.org/b/id/${j.coverId}-L.jpg`;
+        box.append(img);
+      })
+      .catch(() => {});
+  }
+</script>
