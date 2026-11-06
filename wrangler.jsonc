@@ -15,8 +15,8 @@
 	],
 	"vars": {
 		// Cloudflare Access: team domain + application AUD tag. Empty = auth off (local dev only).
-		"ACCESS_TEAM_DOMAIN": "",
-		"ACCESS_AUD": "",
+		"ACCESS_TEAM_DOMAIN": "sparkling-limit-d352.cloudflareaccess.com",
+		"ACCESS_AUD": "2344ea5bdc227d2efe25fa80542d4625a4bc7b8d8d841babca579bc79f7f264d",
 		// Comma-separated email=Display Name pairs
 		"USERS": "aron@uptimewebservices.com=Aron,darlenedifrischia@yahoo.com=Darlene"
 	},
