@@ -12,7 +12,9 @@
     "db:migrate": "wrangler d1 migrations apply home-library --remote",
     "db:seed": "wrangler d1 execute home-library --remote --file=./db/seed.sql",
     "db:local": "wrangler d1 migrations apply home-library --local && wrangler d1 execute home-library --local --file=./db/seed.sql",
-    "generate-types": "wrangler types --strict-vars=false"
+    "generate-types": "wrangler types --strict-vars=false",
+    "prebuild": "node -e \"require('fs').copyFileSync('node_modules/zxing-wasm/dist/reader/zxing_reader.wasm','public/wasm/zxing_reader.wasm')\"",
+    "predev": "node -e \"require('fs').copyFileSync('node_modules/zxing-wasm/dist/reader/zxing_reader.wasm','public/wasm/zxing_reader.wasm')\""
   },
   "engines": {
     "node": ">=22.12.0"
@@ -23,7 +25,8 @@
     "@fontsource-variable/inter": "^5.3.0",
     "@tailwindcss/vite": "^4.3.5",
     "astro": "^7.4.7",
-    "tailwindcss": "^4.3.5"
+    "tailwindcss": "^4.3.5",
+    "zxing-wasm": "^3.1.6"
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.12",

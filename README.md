@@ -10,6 +10,16 @@ Live at **https://home-library.aron-da0.workers.dev** (Access sign-in required).
 - Book page: every copy's current location and where it moves in the re-file, flags, notes, other books from the series you own.
 - Covers: looked up from Open Library by title + author the first time a book scrolls into view. On any book page you can replace it with your own photo (stored in the `home-library-covers` R2 bucket).
 
+## Phase 2: Scan
+
+`/scan` has three modes, all using the phone's rear camera (zxing-wasm, works on iPhone and Android) with typed-ISBN and title-search fallbacks:
+
+- **Do we own it?** For bookstores. Owned edition, owned title in another edition, or not in the library. Saves nothing.
+- **Add a book.** Looks up the ISBN (Open Library, then Google Books), suggests a section from the author's other books or the subjects, and shows the shelf it belongs on with its neighbours and a space check. Choose "on that shelf now" or "guest room stack for now". Offers "add another copy" when you already own the title.
+- **Verify.** Matches a scanned book to its catalog row, attaches the ISBN/edition and the edition's cover (unless you uploaded your own photo), and shows where it lives now and where it moves in the re-file.
+
+Filing uses the planned layout (Destination Map): section shelves in order, author last name, series in reading order, then title.
+
 ## First deploy (one time)
 
 ```bash

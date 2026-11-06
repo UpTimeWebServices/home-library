@@ -11,6 +11,7 @@ const user = Astro.locals.user;
 const path = Astro.url.pathname;
 const nav = [
   { href: '/', label: 'Library', active: path === '/' || path.startsWith('/book') },
+  { href: '/scan', label: 'Scan', active: path.startsWith('/scan') },
 ];
 ---
 
@@ -27,16 +28,16 @@ const nav = [
   <body class="min-h-dvh">
     <header class="border-b border-rule bg-paper/95 backdrop-blur supports-[backdrop-filter]:bg-paper/80">
       <div class="wrap flex h-14 items-center justify-between gap-4">
-        <a href="/" class="font-serif text-xl font-semibold tracking-tight [font-variation-settings:'opsz'_72,'SOFT'_50]">
+        <a href="/" class="whitespace-nowrap font-serif text-lg font-semibold tracking-tight sm:text-xl [font-variation-settings:'opsz'_72,'SOFT'_50]">
           Dream House Library
         </a>
-        <nav aria-label="Main" class="flex items-center gap-5 text-sm">
+        <nav aria-label="Main" class="flex items-center gap-4 text-sm sm:gap-5">
           {nav.map((n) => (
             <a href={n.href} aria-current={n.active ? 'page' : undefined} class:list={['hover:text-green', n.active ? 'font-semibold text-green' : 'text-ink-soft']}>
               {n.label}
             </a>
           ))}
-          {user && <span class="text-ink-soft">{user.name}</span>}
+          {user && <span class="hidden text-ink-soft sm:inline">{user.name}</span>}
         </nav>
       </div>
     </header>

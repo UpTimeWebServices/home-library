@@ -12,5 +12,6 @@ export default defineConfig({
   output: 'server',
   adapter: cloudflare({ imageService: 'passthrough' }),
   session: false,
+  devToolbar: { enabled: false },
   vite: { plugins: [tailwindcss()] },
 });

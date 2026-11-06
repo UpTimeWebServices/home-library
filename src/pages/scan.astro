@@ -1,0 +1,445 @@
+---
+import Layout from '@/layouts/Layout.astro';
+import { db } from '@/lib/db';
+
+const d = db();
+const [secRes, serRes] = await d.batch([
+  d.prepare('SELECT name FROM sections ORDER BY rule_order'),
+  d.prepare('SELECT name FROM series ORDER BY name COLLATE NOCASE'),
+]);
+const sections = ((secRes?.results ?? []) as { name: string }[]).map((r) => r.name);
+const series = ((serRes?.results ?? []) as { name: string }[]).map((r) => r.name);
+const mode = ['verify', 'add', 'check'].includes(Astro.url.searchParams.get('mode') ?? '') ? Astro.url.searchParams.get('mode') : 'check';
+---
+
+<Layout title="Scan">
+  <div class="wrap max-w-xl py-4">
+    <div class="grid grid-cols-3 overflow-hidden rounded-lg border border-rule bg-card text-sm font-medium" role="tablist" aria-label="Scan mode">
+      <button type="button" role="tab" data-mode="check" class="py-2.5 aria-selected:bg-green aria-selected:text-paper">Do we own it?</button>
+      <button type="button" role="tab" data-mode="add" class="border-x border-rule py-2.5 aria-selected:bg-green aria-selected:text-paper">Add a book</button>
+      <button type="button" role="tab" data-mode="verify" class="py-2.5 aria-selected:bg-green aria-selected:text-paper">Verify</button>
+    </div>
+    <p id="mode-help" class="mt-2 text-sm text-ink-soft"></p>
+
+    <div id="scan-area" class="mt-3">
+      <div class="relative aspect-[4/3] overflow-hidden rounded-lg bg-ink">
+        <video id="video" class="absolute inset-0 size-full object-cover" muted playsinline></video>
+        <div id="guide" hidden class="pointer-events-none absolute inset-x-[12%] top-1/2 h-0.5 -translate-y-1/2 bg-brass shadow-[0_0_0_9999px_rgb(0_0_0/0.25)]"></div>
+        <div id="cam-idle" class="absolute inset-0 grid place-items-center p-6 text-center text-paper">
+          <div>
+            <button type="button" id="cam-start" class="rounded-full bg-paper px-5 py-2.5 font-medium text-ink">Start camera</button>
+            <p id="cam-error" class="mt-3 text-sm text-paper/80"></p>
+          </div>
+        </div>
+      </div>
+
+      <form id="isbn-form" class="mt-3 flex gap-2">
+        <label class="sr-only" for="isbn">ISBN</label>
+        <input id="isbn" inputmode="numeric" autocomplete="off" placeholder="Or type the ISBN" class="h-11 min-w-0 flex-1 rounded-lg border border-rule bg-card px-3 text-base" />
+        <button class="rounded-lg bg-green px-4 font-medium text-paper">Look up</button>
+      </form>
+      <form id="title-form" class="mt-2 flex gap-2">
+        <label class="sr-only" for="title-q">Title search</label>
+        <input id="title-q" type="search" autocomplete="off" placeholder="No barcode? Search by title and author" class="h-11 min-w-0 flex-1 rounded-lg border border-rule bg-card px-3 text-base" />
+        <button class="rounded-lg border border-green px-4 font-medium text-green">Search</button>
+      </form>
+    </div>
+
+    <div id="result" class="mt-5" aria-live="polite"></div>
+  </div>
+
+  <datalist id="series-list">{series.map((s) => <option value={s} />)}</datalist>
+  <script type="application/json" id="scan-data" set:html={JSON.stringify({ sections, mode })} />
+</Layout>
+
+<script>
+  import { Scanner } from '@/lib/scanner';
+  import { clothFor, coverUrl, placeText } from '@/lib/format';
+  import type { Found } from '@/lib/lookup';
+  import type { CopyHit, WorkHit } from '@/lib/match';
+  import type { Placement } from '@/lib/filing';
+
+  interface Lookup {
+    isbn: string | null;
+    found: Found | null;
+    suggestedSection: string | null;
+    owned: CopyHit[];
+    candidates: WorkHit[];
+    error?: string;
+  }
+
+  const cfg = JSON.parse(document.getElementById('scan-data')!.textContent!) as { sections: string[]; mode: string };
+  let mode = cfg.mode;
+  const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
+  const result = $('result');
+  // On phones the camera fills the screen: bring each new result into view.
+  new MutationObserver(() => {
+    if (result.childElementCount && result.getBoundingClientRect().top > innerHeight * 0.55) {
+      result.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }).observe(result, { childList: true });
+  const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+
+  const HELP: Record<string, string> = {
+    check: 'Scan a book in a store to see whether it is already on your shelves. Nothing is saved.',
+    add: 'Scan a book you just got. The app suggests a section and tells you which shelf it goes on.',
+    verify: 'Scan books already in the catalog to attach the exact edition and cover.',
+  };
+
+  // ---------- camera ----------
+  const video = $<HTMLVideoElement>('video');
+  const scanner = new Scanner(video, (code) => void handleIsbn(code));
+  const idle = $('cam-idle');
+  const guide = $('guide');
+
+  async function startCamera() {
+    $('cam-error').textContent = '';
+    try {
+      await scanner.start();
+      idle.hidden = true;
+      guide.hidden = false;
+    } catch (e) {
+      const name = e instanceof DOMException ? e.name : '';
+      $('cam-error').textContent =
+        name === 'NotAllowedError'
+          ? 'Camera access was blocked. Allow it in your browser settings, or type the ISBN below.'
+          : 'No camera available. Type the ISBN below instead.';
+    }
+  }
+  function stopCamera() {
+    scanner.stop();
+    idle.hidden = false;
+    guide.hidden = true;
+  }
+  $('cam-start').addEventListener('click', startCamera);
+
+  // ---------- mode tabs ----------
+  const tabs = [...document.querySelectorAll<HTMLButtonElement>('[data-mode]')];
+  function setMode(m: string, keepResult = false) {
+    mode = m;
+    tabs.forEach((t) => t.setAttribute('aria-selected', String(t.dataset.mode === m)));
+    $('mode-help').textContent = HELP[m] ?? '';
+    history.replaceState(null, '', `?mode=${m}`);
+    if (!keepResult) result.innerHTML = '';
+  }
+  tabs.forEach((t) => t.addEventListener('click', () => setMode(t.dataset.mode!)));
+  setMode(mode);
+
+  // ---------- shared bits ----------
+  const thumb = (coverId: number | null, url: string | null, section: string | null, cls = 'w-14') => {
+    const src = coverUrl(coverId, 'M', url);
+    return `<div class="${cls} shrink-0"><div class="cloth relative aspect-[2/3] overflow-hidden rounded-[3px]" style="--cloth:${clothFor(section)}">${src ? `<img src="${esc(src)}" alt="" class="absolute inset-0 size-full object-cover" onerror="this.remove()">` : ''}</div></div>`;
+  };
+  const panel = (inner: string, tone: 'ok' | 'warn' | 'plain' = 'plain') =>
+    `<div class="rounded-lg border p-4 ${tone === 'ok' ? 'border-green/40 bg-green-soft' : tone === 'warn' ? 'border-brass/40 bg-brass-soft' : 'border-rule bg-card'}">${inner}</div>`;
+  const again = `<button type="button" data-act="again" class="mt-4 w-full rounded-lg bg-green py-3 font-medium text-paper">Scan the next book</button>`;
+  const loading = (text: string) => (result.innerHTML = `<p class="text-ink-soft">${esc(text)}</p>`);
+  const foundLine = (f: Found | null, isbn: string | null) =>
+    f ? `<p class="font-serif text-lg font-medium leading-snug">${esc(f.title)}</p><p class="text-sm text-ink-soft">${esc(f.authors.join(', ') || 'Unknown author')}${f.year ? `, ${f.year}` : ''}</p>` : `<p class="font-medium">ISBN ${esc(isbn)}</p><p class="text-sm text-ink-soft">No details found online for this ISBN.</p>`;
+
+  result.addEventListener('click', (e) => {
+    const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act;
+    if (act === 'again') {
+      result.innerHTML = '';
+      void startCamera();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  });
+
+  // ---------- lookups ----------
+  let last: Lookup | null = null;
+
+  async function handleIsbn(code: string) {
+    stopCamera();
+    loading(`Looking up ${code}…`);
+    const res = await fetch(`/api/scan/lookup?isbn=${encodeURIComponent(code)}`);
+    const data = (await res.json().catch(() => ({ error: 'Lookup failed. Check your connection and try again.' }))) as Lookup;
+    if (!res.ok || data.error) {
+      result.innerHTML = panel(`<p>${esc(data.error ?? 'Lookup failed.')}</p>`, 'warn') + again;
+      return;
+    }
+    last = data;
+    render();
+  }
+
+  $('isbn-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const v = $<HTMLInputElement>('isbn').value.trim();
+    if (v) void handleIsbn(v);
+  });
+
+  $('title-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const q = $<HTMLInputElement>('title-q').value.trim();
+    if (!q) return;
+    stopCamera();
+    loading('Searching…');
+    const { results = [] } = (await (await fetch(`/api/scan/lookup?q=${encodeURIComponent(q)}`)).json()) as { results?: Found[] };
+    if (!results.length) {
+      result.innerHTML = panel('<p>No matches online. You can still add it by hand.</p>', 'warn') +
+        `<button type="button" id="manual" class="mt-3 w-full rounded-lg border border-green py-3 font-medium text-green">Add by hand</button>`;
+      $('manual').addEventListener('click', () => {
+        last = { isbn: null, found: { isbn: null, title: q, subtitle: null, authors: [], authorSort: null, publisher: null, year: null, pages: null, coverId: null, coverUrl: null, subjects: [], source: 'openlibrary' }, suggestedSection: null, owned: [], candidates: [] };
+        renderAddForm();
+      });
+      return;
+    }
+    result.innerHTML = `<p class="mb-2 text-sm text-ink-soft">Pick the matching book</p><ul class="divide-y divide-rule rounded-lg border border-rule bg-card">${results
+      .map((r, i) => `<li><button type="button" data-pick="${i}" class="flex w-full items-center gap-3 p-3 text-left hover:bg-paper">${thumb(r.coverId, null, null, 'w-10')}<span class="min-w-0"><span class="block font-medium">${esc(r.title)}</span><span class="block text-sm text-ink-soft">${esc(r.authors.join(', '))}${r.year ? `, ${r.year}` : ''}</span></span></button></li>`)
+      .join('')}</ul>`;
+    result.querySelectorAll<HTMLButtonElement>('[data-pick]').forEach((b) =>
+      b.addEventListener('click', async () => {
+        const f = results[Number(b.dataset.pick)]!;
+        loading('Checking the library…');
+        const params = new URLSearchParams({ title: f.title, author: f.authorSort ?? '' });
+        if (f.isbn) params.set('isbn', f.isbn);
+        f.subjects.forEach((s) => params.append('subject', s));
+        const m = (await (await fetch(`/api/scan/match?${params}`)).json()) as Omit<Lookup, 'isbn' | 'found'>;
+        last = { isbn: null, found: { ...f, isbn: null }, ...m };
+        render();
+      }),
+    );
+  });
+
+  function render() {
+    if (!last) return;
+    if (mode === 'check') renderCheck(last);
+    else if (mode === 'verify') renderVerify(last);
+    else renderAdd(last);
+  }
+
+  // ---------- Check ----------
+  function renderCheck(l: Lookup) {
+    const strong = l.candidates.filter((c) => c.score >= 2);
+    let html: string;
+    if (l.owned.length) {
+      html = panel(
+        `<p class="text-sm font-medium text-green">You own this edition</p>${foundLine(l.found, l.isbn)}
+         <ul class="mt-3 space-y-1">${l.owned.map((c) => `<li><a class="text-lg font-medium text-brass underline-offset-2 hover:underline" href="/book/${c.workId}">${esc(placeText(c))}</a>${c.borrower ? `<span class="block text-sm">Loaned to ${esc(c.borrower)}</span>` : ''}</li>`).join('')}</ul>`,
+        'ok',
+      );
+    } else if (strong.length) {
+      html = panel(
+        `<p class="text-sm font-medium text-green">You own this title</p>${foundLine(l.found, l.isbn)}
+         <p class="mt-1 text-sm text-ink-soft">Yours may be a different edition.</p>
+         <ul class="mt-3 space-y-2">${strong.map((c) => `<li class="flex items-center gap-3">${thumb(c.coverId, c.coverUrl, c.section, 'w-10')}<a href="/book/${c.workId}" class="min-w-0"><span class="block font-medium">${esc(c.title)}</span><span class="block text-brass">${esc(placeText(c))}${c.copies > 1 ? `, ${c.copies} copies` : ''}</span></a></li>`).join('')}</ul>`,
+        'ok',
+      );
+    } else {
+      html = panel(
+        `<div class="flex gap-3">${l.found ? thumb(l.found.coverId, l.found.coverUrl, null) : ''}<div class="min-w-0"><p class="text-sm font-medium text-brass">Not in your library</p>${foundLine(l.found, l.isbn)}</div></div>
+         ${l.candidates.length ? `<p class="mt-3 text-sm text-ink-soft">Close matches: ${l.candidates.map((c) => `<a class="underline" href="/book/${c.workId}">${esc(c.title)}</a>`).join(', ')}</p>` : ''}
+         <button type="button" id="to-add" class="mt-3 font-medium text-green hover:underline">Bought it? Add it to the library</button>`,
+        'warn',
+      );
+    }
+    result.innerHTML = html + again;
+    document.getElementById('to-add')?.addEventListener('click', () => {
+      setMode('add', true);
+      renderAdd(l);
+    });
+  }
+
+  // ---------- Verify ----------
+  function renderVerify(l: Lookup) {
+    const already = l.owned.filter((c) => c.verified);
+    if (already.length) {
+      result.innerHTML = panel(`<p class="text-sm font-medium text-green">Already verified</p>${foundLine(l.found, l.isbn)}<p class="mt-2 text-lg font-medium text-brass">${esc(placeText(already[0]!))}</p>`, 'ok') + again;
+      return;
+    }
+    const options = l.candidates.filter((c) => c.unverifiedCopyId);
+    if (!options.length) {
+      result.innerHTML =
+        panel(`<p class="text-sm font-medium text-brass">Not found in the catalog</p>${foundLine(l.found, l.isbn)}<p class="mt-2 text-sm text-ink-soft">It may be listed under a different title, or it was missed when the shelves were photographed.</p>
+        <button type="button" id="to-add" class="mt-3 font-medium text-green hover:underline">Add it as a new book</button>`, 'warn') + again;
+      document.getElementById('to-add')?.addEventListener('click', () => {
+        setMode('add', true);
+        renderAdd(l);
+      });
+      return;
+    }
+    result.innerHTML = `${panel(`<div class="flex gap-3">${l.found ? thumb(l.found.coverId, l.found.coverUrl, null) : ''}<div>${foundLine(l.found, l.isbn)}</div></div>`)}
+      <p class="mb-2 mt-4 text-sm text-ink-soft">${options.length === 1 ? 'Is this the catalog entry?' : 'Which catalog entry is this?'}</p>
+      <ul class="space-y-2">${options
+        .map((c) => `<li>${panel(`<div class="flex gap-3">${thumb(c.coverId, c.coverUrl, c.section, 'w-12')}<div class="min-w-0 flex-1"><p class="font-medium">${esc(c.title)}</p><p class="text-sm text-ink-soft">${esc(c.author)}</p><p class="mt-1 text-sm text-brass">${esc(placeText(c))}</p></div></div>
+          <button type="button" data-verify="${c.unverifiedCopyId}" class="mt-3 w-full rounded-lg bg-green py-2.5 font-medium text-paper">Yes, this one</button>`)}</li>`)
+        .join('')}</ul>
+      <button type="button" data-act="again" class="mt-4 w-full rounded-lg border border-rule py-3 font-medium">None of these, scan another</button>`;
+    result.querySelectorAll<HTMLButtonElement>('[data-verify]').forEach((b) =>
+      b.addEventListener('click', async () => {
+        b.disabled = true;
+        b.textContent = 'Saving…';
+        const f = l.found;
+        const res = await fetch('/api/scan/verify', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ copyId: Number(b.dataset.verify), isbn: l.isbn, publisher: f?.publisher, year: f?.year, pages: f?.pages, coverId: f?.coverId, coverUrl: f?.coverUrl }),
+        });
+        const j = (await res.json()) as { now?: string; planned?: string | null; workId?: number; error?: string };
+        if (!res.ok) {
+          b.disabled = false;
+          b.textContent = 'Yes, this one';
+          alertBox(j.error ?? 'Could not save. Try again.');
+          return;
+        }
+        result.innerHTML = panel(
+          `<p class="text-sm font-medium text-green">Verified</p>${foundLine(l.found, l.isbn)}
+           <p class="mt-3 text-sm text-ink-soft">Lives on</p><p class="text-lg font-medium text-brass">${esc(j.now)}</p>
+           ${j.planned && j.planned !== j.now ? `<p class="mt-2 text-sm text-ink-soft">Moves to ${esc(j.planned)} in the re-file</p>` : ''}
+           <a href="/book/${j.workId}" class="mt-2 inline-block text-sm text-green underline">Open book</a>`,
+          'ok',
+        ) + again;
+      }),
+    );
+  }
+
+  function alertBox(msg: string) {
+    result.insertAdjacentHTML('afterbegin', panel(`<p>${esc(msg)}</p>`, 'warn'));
+  }
+
+  // ---------- Add ----------
+  function renderAdd(l: Lookup) {
+    const strong = [...new Map([...l.owned.map((c) => [c.workId, { workId: c.workId, title: c.title, place: placeText(c) }] as const), ...l.candidates.filter((c) => c.score >= 2).map((c) => [c.workId, { workId: c.workId, title: c.title, place: placeText(c) }] as const)]).values()];
+    if (!strong.length) return renderAddForm();
+    result.innerHTML = panel(
+      `<p class="text-sm font-medium text-brass">You already have this title</p>${foundLine(l.found, l.isbn)}
+       <ul class="mt-2 space-y-1">${strong.map((s) => `<li><a class="text-brass underline-offset-2 hover:underline" href="/book/${s.workId}">${esc(s.place)}</a></li>`).join('')}</ul>
+       <div class="mt-4 grid gap-2">
+         ${strong.map((s) => `<button type="button" data-copy="${s.workId}" class="rounded-lg bg-green py-2.5 font-medium text-paper">Add another copy${strong.length > 1 ? ` of “${esc(s.title)}”` : ''}</button>`).join('')}
+         <button type="button" id="different" class="rounded-lg border border-rule py-2.5 font-medium">It's a different book</button>
+       </div>`,
+      'warn',
+    );
+    result.querySelectorAll<HTMLButtonElement>('[data-copy]').forEach((b) => b.addEventListener('click', () => renderAddForm(Number(b.dataset.copy))));
+    $('different').addEventListener('click', () => renderAddForm());
+  }
+
+  function renderAddForm(workId?: number) {
+    const l = last!;
+    const f = l.found;
+    const existing = workId ? l.owned.find((c) => c.workId === workId) ?? l.candidates.find((c) => c.workId === workId) : undefined;
+    const section = l.suggestedSection ?? '';
+    const field = 'mt-1 h-11 w-full rounded-lg border border-rule bg-card px-3 text-base';
+    result.innerHTML = `
+      <form id="add-form" class="space-y-4">
+        ${panel(`<div class="flex gap-3">${f ? thumb(f.coverId, f.coverUrl, null) : ''}<div class="min-w-0">${foundLine(f, l.isbn)}${existing ? `<p class="mt-1 text-sm text-green">Another copy of “${esc(existing.title)}”</p>` : ''}</div></div>`)}
+        ${existing ? '' : `
+        <label class="block text-sm font-medium">Title<input name="title" required class="${field}" value="${esc(f?.title ?? '')}"></label>
+        <label class="block text-sm font-medium">Author, last name first
+          <input name="authorSort" class="${field}" value="${esc(f?.authorSort ?? '')}" placeholder="Gaiman, Neil">
+          <span class="mt-1 block text-xs font-normal text-ink-soft">Separate co-authors with a semicolon.</span></label>
+        <label class="block text-sm font-medium">Section
+          <select name="section" required class="${field}">
+            <option value="">Choose a section</option>
+            ${cfg.sections.map((s) => `<option ${s === section ? 'selected' : ''}>${esc(s)}</option>`).join('')}
+          </select>
+          ${section ? `<span class="mt-1 block text-xs font-normal text-ink-soft">Suggested from the author's other books or the subject. Change it if it belongs elsewhere.</span>` : ''}</label>
+        <div class="grid grid-cols-[1fr_6rem] gap-2">
+          <label class="block text-sm font-medium">Series <span class="font-normal text-ink-soft">(optional)</span><input name="series" list="series-list" class="${field}"></label>
+          <label class="block text-sm font-medium">Number<input name="seriesPos" inputmode="decimal" class="${field}"></label>
+        </div>`}
+        <fieldset class="flex flex-wrap gap-x-5 gap-y-2 text-sm">
+          <legend class="sr-only">Edition</legend>
+          <label class="flex items-center gap-2"><input type="checkbox" name="firstEdition" class="size-4 accent-green"> First edition</label>
+          <label class="flex items-center gap-2"><input type="checkbox" name="signed" class="size-4 accent-green"> Signed</label>
+        </fieldset>
+        <label class="block text-sm font-medium">Notes <span class="font-normal text-ink-soft">(optional)</span><textarea name="notes" rows="2" class="mt-1 w-full rounded-lg border border-rule bg-card px-3 py-2 text-base"></textarea></label>
+
+        <div id="placement" class="rounded-lg border border-brass/40 bg-brass-soft p-4 text-sm">Pick a section to see where it goes.</div>
+
+        <fieldset class="space-y-2 text-sm">
+          <legend class="mb-1 font-medium">Where are you putting it?</legend>
+          <label class="flex items-center gap-2"><input type="radio" name="location" value="shelf" checked class="size-4 accent-green"> On that shelf now</label>
+          <label class="flex items-center gap-2"><input type="radio" name="location" value="stack" class="size-4 accent-green"> On the guest room stack for now</label>
+        </fieldset>
+        <p id="add-error" class="text-sm text-[#a23b2a]"></p>
+        <button class="w-full rounded-lg bg-green py-3 font-medium text-paper">Add to library</button>
+      </form>`;
+
+    const form = $<HTMLFormElement>('add-form');
+    const placeBox = $('placement');
+    let timer: number | undefined;
+
+    const describe = (p: Placement) => {
+      if (!p.place) return `<p class="text-base font-medium text-brass">${esc(p.placeText)}</p><p class="mt-1 text-ink-soft">${esc(p.note)}</p>`;
+      const nb = (n: Placement['before'], word: string) => (n ? `${word} <a class="underline" href="/book/${n.id}">${esc(n.title)}</a>${n.author ? ` (${esc(n.author.split(' & ')[0]!.split(' ').at(-1))})` : ''}` : '');
+      const between = [nb(p.before, 'after'), nb(p.after, 'before')].filter(Boolean).join(', ');
+      return `<p class="text-ink-soft">Belongs on</p><p class="text-lg font-medium text-brass">${esc(p.placeText)}</p>
+        ${between ? `<p class="mt-1">${between}</p>` : ''}
+        ${p.widthIn ? `<p class="mt-2 ${p.full ? 'font-medium text-[#a23b2a]' : 'text-ink-soft'}">${p.full ? 'This shelf is full' : 'Room on this shelf'}: about ${p.usedIn} of ${p.widthIn} inches used.</p>` : ''}
+        ${p.note ? `<p class="mt-1 text-ink-soft">${esc(p.note)}</p>` : ''}`;
+    };
+
+    async function updatePlacement() {
+      const fd = new FormData(form);
+      const params = new URLSearchParams();
+      if (workId) {
+        params.set('workId', String(workId));
+      } else {
+        const sectionVal = String(fd.get('section') ?? '');
+        if (!sectionVal) {
+          placeBox.innerHTML = 'Pick a section to see where it goes.';
+          return;
+        }
+        params.set('section', sectionVal);
+        params.set('title', String(fd.get('title') ?? ''));
+        params.set('author', String(fd.get('authorSort') ?? ''));
+        params.set('series', String(fd.get('series') ?? ''));
+        params.set('pos', String(fd.get('seriesPos') ?? ''));
+      }
+      if (f?.pages) params.set('pages', String(f.pages));
+      const res = await fetch(`/api/scan/place?${params}`);
+      if (!res.ok) return;
+      const p = (await res.json()) as Placement;
+      placeBox.innerHTML = describe(p);
+      if (p.full || !p.place) form.querySelector<HTMLInputElement>('input[value="stack"]')!.checked = true;
+    }
+    form.addEventListener('input', () => {
+      clearTimeout(timer);
+      timer = window.setTimeout(updatePlacement, 300);
+    });
+    void updatePlacement();
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const btn = form.querySelector('button:last-of-type') as HTMLButtonElement;
+      btn.disabled = true;
+      btn.textContent = 'Adding…';
+      const body = {
+        workId: workId ?? null,
+        title: fd.get('title'),
+        authorSort: fd.get('authorSort'),
+        section: fd.get('section'),
+        series: fd.get('series'),
+        seriesPos: fd.get('seriesPos'),
+        isbn: l.isbn,
+        publisher: f?.publisher,
+        year: f?.year,
+        pages: f?.pages,
+        coverId: f?.coverId,
+        coverUrl: f?.coverUrl,
+        firstEdition: fd.get('firstEdition') === 'on',
+        signed: fd.get('signed') === 'on',
+        notes: fd.get('notes'),
+        location: fd.get('location'),
+      };
+      const res = await fetch('/api/books', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+      const j = (await res.json()) as { workId?: number; placement?: Placement; onStack?: boolean; error?: string };
+      if (!res.ok || !j.placement) {
+        $('add-error').textContent = j.error ?? 'Could not add the book. Try again.';
+        btn.disabled = false;
+        btn.textContent = 'Add to library';
+        return;
+      }
+      result.innerHTML =
+        panel(
+          `<p class="text-sm font-medium text-green">Added to the library</p>${foundLine(f, l.isbn)}
+           <p class="mt-3 text-sm text-ink-soft">${j.onStack ? 'For now: Guest Room, dresser stack. It belongs on' : 'File it on'}</p>
+           ${describe(j.placement)}
+           <a href="/book/${j.workId}" class="mt-2 inline-block text-sm text-green underline">Open book</a>`,
+          'ok',
+        ) + again;
+    });
+  }
+</script>
