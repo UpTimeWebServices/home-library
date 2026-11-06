@@ -16,12 +16,10 @@ export const hardcoverConfigured = (): boolean => !!(env as { HARDCOVER_TOKEN?: 
 function authHeader(): string {
   // Tolerate copy/paste debris: surrounding quotes, line breaks, a doubled "Bearer".
   const t = ((env as { HARDCOVER_TOKEN?: string }).HARDCOVER_TOKEN ?? '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .replace(/^["']|["']$/g, '')
-    .replace(/^(bearer\s+)+/i, 'Bearer ');
+    .replace(/["'\s]/g, '')        // tokens never contain quotes or whitespace
+    .replace(/^(bearer)+/i, '');   // "Bearer" is added back below, once
   if (!t) throw new HardcoverError('HARDCOVER_TOKEN is not set. Run: npx wrangler secret put HARDCOVER_TOKEN');
-  return /^bearer\s/i.test(t) ? t : `Bearer ${t}`;
+  return `Bearer ${t}`;
 }
 
 export async function hc<T>(query: string, variables: Record<string, unknown> = {}): Promise<T> {
