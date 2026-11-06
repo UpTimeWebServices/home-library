@@ -49,6 +49,7 @@ const data = JSON.stringify(rows).replace(/</g, '\\u003c');
           <option value="dupes">More than one copy</option>
           <option value="series">In a series</option>
           <option value="moves">Moving in the re-file</option>
+          <option value="noauthor">No author</option>
         </select>
         <select id="sort" aria-label="Sort" class="rounded-md border border-rule bg-card py-1 pl-2 pr-1 text-ink">
           <option value="author">By author</option>
@@ -137,6 +138,7 @@ const data = JSON.stringify(rows).replace(/</g, '\\u003c');
       if (state.filter === 'dupes' && r[13] < 2) return false;
       if (state.filter === 'series' && !r[6]) return false;
       if (state.filter === 'moves' && !r[15]) return false;
+      if (state.filter === 'noauthor' && r[2]) return false;
       return tokens.every((t) => hay[i]!.includes(t));
     });
     if (state.sort === 'title') matched.sort((a, b) => a[3].localeCompare(b[3], undefined, { sensitivity: 'base' }));

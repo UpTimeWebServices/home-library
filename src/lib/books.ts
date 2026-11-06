@@ -27,7 +27,11 @@ export function toAuthorSort(name: string): string {
   if (parts.length === 1) return n;
   let suffix = '';
   if (parts.length > 2 && SUFFIX.test(parts.at(-1)!)) suffix = ` ${parts.pop()}`;
-  const last = parts.pop()!;
+  let last = parts.pop()!;
+  // Surname particles stay with the surname: Le Guin, de la Cruz, van Gogh, Du Maurier.
+  while (parts.length > 1 && /^(le|la|de|del|della|der|den|van|von|du|di|da|des|st\.?|mac|ter)$/i.test(parts.at(-1)!)) {
+    last = `${parts.pop()} ${last}`;
+  }
   return `${last}, ${parts.join(' ')}${suffix}`;
 }
 

@@ -83,7 +83,7 @@ export async function findSeries(name: string, authorLast: string | null): Promi
   return pick ? { id: Number(pick.id), name: pick.name! } : null;
 }
 
-export interface HcEntry { position: number | null; bookId: number; title: string; releaseDate: string | null }
+export interface HcEntry { position: number | null; bookId: number; title: string; originalTitle?: string; releaseDate: string | null }
 
 /** Every book in a series: one per position, most-read edition, no merged/partial books or compilations (Hardcover's recipe). */
 export async function seriesBooks(seriesId: number): Promise<{ name: string; entries: HcEntry[] } | null> {
@@ -106,4 +106,56 @@ export async function seriesBooks(seriesId: number): Promise<{ name: string; ent
     name: s.name,
     entries: s.book_series.filter((b) => b.book).map((b) => ({ position: b.position, bookId: b.book.id, title: b.book.title, releaseDate: b.book.release_date })),
   };
+}
+
+/* ───────────── English titles ─────────────
+ * A Hardcover book's own title is often the original-language one ("Panserhjerte").
+ * The most-read English edition gives the title you'd see in a US bookstore ("The Leopard").
+ */
+let englishId: number | null | undefined;
+
+async function englishLanguageId(): Promise<number | null> {
+  if (englishId !== undefined) return englishId;
+  const tries: [string, (d: unknown) => number | undefined][] = [
+    ['query { languages(where: {code2: {_eq: "en"}}, limit: 1) { id } }', (d) => (d as { languages: { id: number }[] }).languages[0]?.id],
+    ['query { languages(where: {language: {_eq: "English"}}, limit: 1) { id } }', (d) => (d as { languages: { id: number }[] }).languages[0]?.id],
+  ];
+  for (const [q, pick] of tries) {
+    try {
+      const id = pick(await hc(q));
+      if (id) return (englishId = id);
+    } catch {
+      /* try the next shape */
+    }
+  }
+  return (englishId = 1); // Hardcover's English has been id 1
+}
+
+/** Tidy edition titles: "The Leopard (Harry Hole, #8)" / "The Leopard: A Harry Hole Novel" -> "The Leopard". */
+export function cleanEditionTitle(t: string): string {
+  return t
+    .replace(/\s*\([^)]*#\s*\d[^)]*\)\s*$/, '')
+    .replace(/\s*[:\-–]\s*(an?|the)\s+(new\s+)?[^:]*?\b(novel|thriller|mystery)\b.*$/i, '')
+    .replace(/,?\s*book\s+\d+$/i, '')
+    .trim();
+}
+
+/** English title per Hardcover book id (only books that have an English edition). */
+export async function englishTitles(bookIds: number[]): Promise<Map<number, string>> {
+  const out = new Map<number, string>();
+  if (!bookIds.length) return out;
+  const lang = await englishLanguageId();
+  if (!lang) return out;
+  const d = await hc<{ editions: { book_id: number; title: string | null }[] }>(
+    `query ($ids: [Int!], $lang: Int!) {
+      editions(
+        distinct_on: book_id
+        order_by: [{book_id: asc}, {users_count: desc}]
+        where: {book_id: {_in: $ids}, language_id: {_eq: $lang}, title: {_is_null: false}}
+      ) { book_id title }
+    }`,
+    { ids: bookIds, lang },
+  );
+  for (const e of d.editions) if (e.title) out.set(e.book_id, cleanEditionTitle(e.title));
+  return out;
 }

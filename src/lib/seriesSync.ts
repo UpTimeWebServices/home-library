@@ -6,7 +6,7 @@
  */
 import { db } from './db';
 import { lastNameKey, sameTitle, titleKey } from './books';
-import { HardcoverError, findSeries, pause, seriesBooks, seriesForIsbn } from './hardcover';
+import { HardcoverError, englishTitles, findSeries, pause, seriesBooks, seriesForIsbn } from './hardcover';
 
 const DUE = `s.status = 'tracking'
   AND EXISTS (SELECT 1 FROM works w JOIN sections sec ON sec.name = w.section WHERE w.series_id = s.id AND sec.recommend = 1)`;
@@ -94,11 +94,29 @@ async function syncOne(s: { id: number; name: string; hardcover_id: number | nul
     return { series: s.name, ok: false, note: 'Hardcover series disappeared' };
   }
 
+  // English edition titles where Hardcover's own title is in another language. A failure here
+  // only costs the nicer titles, never the sync.
+  let english = new Map<number, string>();
+  try {
+    english = await englishTitles(list.entries.map((e) => e.bookId));
+    await pause();
+  } catch {
+    /* keep Hardcover's titles */
+  }
+  for (const e of list.entries) {
+    const en = english.get(e.bookId);
+    if (en && en !== e.title) {
+      e.originalTitle = e.title;
+      e.title = en;
+    }
+  }
+
   const stmts = list.entries.map((e) =>
     d.prepare(
-      `INSERT INTO series_entries (series_id, position, title, release_date, hardcover_book_id) VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(series_id, hardcover_book_id) DO UPDATE SET position = excluded.position, title = excluded.title, release_date = excluded.release_date`,
-    ).bind(s.id, e.position, e.title, e.releaseDate, e.bookId),
+      `INSERT INTO series_entries (series_id, position, title, original_title, release_date, hardcover_book_id) VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(series_id, hardcover_book_id) DO UPDATE SET position = excluded.position, title = excluded.title,
+         original_title = excluded.original_title, release_date = excluded.release_date`,
+    ).bind(s.id, e.position, e.title, e.originalTitle ?? null, e.releaseDate, e.bookId),
   );
   const keep = list.entries.map((e) => e.bookId);
   stmts.push(
@@ -110,7 +128,7 @@ async function syncOne(s: { id: number; name: string; hardcover_id: number | nul
   //    your catalog and Hardcover can number prequels and spin-offs differently, and a wrong link would
   //    hide a book you don't own. A book you own under another title shows as missing; Skip clears it.
   for (const w of owned.filter((x) => !x.hardcover_id)) {
-    const m = list.entries.find((e) => sameTitle(e.title, w.title));
+    const m = list.entries.find((e) => sameTitle(e.title, w.title) || (!!e.originalTitle && sameTitle(e.originalTitle, w.title)));
     if (m) stmts.push(d.prepare('UPDATE works SET hardcover_id = ? WHERE id = ?').bind(m.bookId, w.id));
   }
   await d.batch(stmts);

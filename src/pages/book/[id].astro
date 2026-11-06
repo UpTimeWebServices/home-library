@@ -1,6 +1,6 @@
 ---
 import Layout from '@/layouts/Layout.astro';
-import { workDetail } from '@/lib/db';
+import { db, workDetail } from '@/lib/db';
 import { clothFor, coverUrl, placeText, samePlace } from '@/lib/format';
 
 const id = Number(Astro.params.id);
@@ -8,6 +8,12 @@ const detail = Number.isInteger(id) ? await workDetail(id) : null;
 if (!detail) return new Response('Book not found', { status: 404 });
 
 const { work, copies, siblings } = detail;
+const [secRes, serRes] = await db().batch([
+  db().prepare('SELECT name FROM sections ORDER BY rule_order'),
+  db().prepare('SELECT name FROM series ORDER BY name COLLATE NOCASE'),
+]);
+const sectionNames = ((secRes?.results ?? []) as { name: string }[]).map((r) => r.name);
+const seriesNames = ((serRes?.results ?? []) as { name: string }[]).map((r) => r.name);
 const cover = coverUrl(work.cover_id, 'L', work.cover_url);
 const ownPhoto = !!work.cover_url;
 const cloth = clothFor(work.section);
@@ -60,7 +66,11 @@ const flagText = (c: (typeof copies)[number]) =>
         <h1 class="font-serif text-3xl font-semibold leading-tight tracking-tight text-balance sm:text-4xl [font-variation-settings:'opsz'_96]">
           {work.title}
         </h1>
-        {work.author && <p class="mt-1 text-lg text-ink-soft">{work.author}</p>}
+        {work.author ? (
+          <p class="mt-1 text-lg text-ink-soft">{work.author}</p>
+        ) : (
+          <p class="mt-1 text-ink-soft">No author yet. <button type="button" data-edit="author" class="font-medium text-green hover:underline">Add the author</button></p>
+        )}
         <p class="mt-3 flex flex-wrap items-center gap-2 text-sm">
           {work.section && (
             <a href={`/?s=${encodeURIComponent(work.section)}`} class="chip flex items-center gap-2">
@@ -73,6 +83,30 @@ const flagText = (c: (typeof copies)[number]) =>
             </a>
           )}
         </p>
+        <button type="button" data-edit="title" class="mt-3 text-sm font-medium text-green hover:underline">Edit details</button>
+
+        <form id="edit-form" hidden class="mt-4 space-y-3 rounded-lg border border-rule bg-card p-4">
+          <label class="block text-sm font-medium">Title<input name="title" required value={work.title} class="mt-1 h-11 w-full rounded-lg border border-rule bg-paper px-3 text-base" /></label>
+          <label class="block text-sm font-medium">Author
+            <input name="authorSort" value={work.author_sort ?? ''} placeholder="Gaiman, Neil" class="mt-1 h-11 w-full rounded-lg border border-rule bg-paper px-3 text-base" />
+            <span class="mt-1 block text-xs font-normal text-ink-soft">“Neil Gaiman” or “Gaiman, Neil” both work. Separate co-authors with a semicolon.</span></label>
+          <label class="block text-sm font-medium">Section
+            <select name="section" class="mt-1 h-11 w-full rounded-lg border border-rule bg-paper px-3 text-base">
+              {sectionNames.map((n) => <option selected={n === work.section}>{n}</option>)}
+            </select></label>
+          <div class="grid grid-cols-[1fr_6rem] gap-2">
+            <label class="block text-sm font-medium">Series<input name="series" list="book-series-list" value={work.series ?? ''} class="mt-1 h-11 w-full rounded-lg border border-rule bg-paper px-3 text-base" /></label>
+            <label class="block text-sm font-medium">Number<input name="seriesPos" inputmode="decimal" value={work.series_pos ?? ''} class="mt-1 h-11 w-full rounded-lg border border-rule bg-paper px-3 text-base" /></label>
+          </div>
+          <datalist id="book-series-list">{seriesNames.map((n) => <option value={n} />)}</datalist>
+          <label class="block text-sm font-medium">Notes<textarea name="notes" rows="2" class="mt-1 w-full rounded-lg border border-rule bg-paper px-3 py-2 text-base">{work.notes ?? ''}</textarea></label>
+          <p class="text-xs text-ink-soft">Changing these doesn't move the book; its shelf stays the same.</p>
+          <p id="edit-error" class="text-sm text-[#a23b2a]"></p>
+          <div class="flex gap-3">
+            <button class="rounded-lg bg-green px-4 py-2.5 font-medium text-paper">Save</button>
+            <button type="button" id="edit-cancel" class="rounded-lg border border-rule px-4 py-2.5 font-medium">Cancel</button>
+          </div>
+        </form>
 
         <section class="mt-6" aria-labelledby="where">
           <h2 id="where" class="font-serif text-xl font-semibold">{multi ? `Where the ${copies.length} copies are` : 'Where it is'}</h2>
@@ -141,6 +175,27 @@ const flagText = (c: (typeof copies)[number]) =>
   if (document.referrer.startsWith(location.origin + '/') && !document.referrer.includes('/book/')) {
     back.addEventListener('click', (e) => { e.preventDefault(); history.back(); });
   }
+
+  // ---- edit details ----
+  const editForm = document.getElementById('edit-form') as HTMLFormElement;
+  document.querySelectorAll<HTMLButtonElement>('[data-edit]').forEach((b) =>
+    b.addEventListener('click', () => {
+      editForm.hidden = false;
+      editForm.querySelector<HTMLInputElement>(`[name="${b.dataset.edit === 'author' ? 'authorSort' : 'title'}"]`)!.focus();
+    }),
+  );
+  document.getElementById('edit-cancel')!.addEventListener('click', () => (editForm.hidden = true));
+  editForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(editForm);
+    const res = await fetch(`/api/works/${(document.getElementById('cover') as HTMLElement).dataset.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(Object.fromEntries(fd.entries())),
+    });
+    if (res.ok) location.reload();
+    else document.getElementById('edit-error')!.textContent = ((await res.json().catch(() => ({}))) as { error?: string }).error ?? 'Could not save.';
+  });
 
   const box = document.getElementById('cover') as HTMLElement;
   const id = box.dataset.id;

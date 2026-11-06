@@ -50,7 +50,7 @@ export async function recommendations(): Promise<{ groups: SeriesGaps[]; complet
         WHERE s.status = 'tracking' AND s.hardcover_id IS NOT NULL
           AND EXISTS (SELECT 1 FROM works w JOIN sections sec ON sec.name = w.section WHERE w.series_id = s.id AND sec.recommend = 1)`,
     ),
-    d.prepare(`SELECT id, series_id, position, title, release_date, hardcover_book_id, dismissed FROM series_entries`),
+    d.prepare(`SELECT id, series_id, position, title, original_title, release_date, hardcover_book_id, dismissed FROM series_entries`),
     d.prepare(`SELECT id, title, series_id, series_pos, hardcover_id FROM works WHERE series_id IS NOT NULL OR hardcover_id IS NOT NULL`),
     d.prepare(`SELECT title, series_entry_id FROM wishlist WHERE fulfilled_copy_id IS NULL AND fulfilled_at IS NULL`),
     d.prepare(`SELECT id, name, hidden_by, hidden_at FROM series WHERE status = 'hidden' ORDER BY name COLLATE NOCASE`),
@@ -59,7 +59,7 @@ export async function recommendations(): Promise<{ groups: SeriesGaps[]; complet
         WHERE e.dismissed = 1 ORDER BY s.name COLLATE NOCASE, e.position`,
     ),
   ]);
-  type E = { id: number; series_id: number; position: number | null; title: string; release_date: string | null; hardcover_book_id: number | null; dismissed: number };
+  type E = { id: number; series_id: number; position: number | null; title: string; original_title: string | null; release_date: string | null; hardcover_book_id: number | null; dismissed: number };
   type W = { id: number; title: string; series_id: number | null; series_pos: number | null; hardcover_id: number | null };
   const entries = (entriesRes?.results ?? []) as E[];
   const works = (worksRes?.results ?? []) as W[];
@@ -75,7 +75,7 @@ export async function recommendations(): Promise<{ groups: SeriesGaps[]; complet
   for (const s of (seriesRes?.results ?? []) as { id: number; name: string; author: string | null }[]) {
     const mine = works.filter((w) => w.series_id === s.id);
 
-    const own = (e: E) => (e.hardcover_book_id !== null && ownedHc.has(e.hardcover_book_id)) || mine.some((w) => sameTitle(w.title, e.title));
+    const own = (e: E) => (e.hardcover_book_id !== null && ownedHc.has(e.hardcover_book_id)) || mine.some((w) => sameTitle(w.title, e.title) || (!!e.original_title && sameTitle(w.title, e.original_title)));
     const published = entries.filter((e) => e.series_id === s.id && (!e.release_date || e.release_date <= t));
     const main = published.filter((e) => isMain(e.position));
     // Owned = linked by Hardcover id (set during sync) or same title. Series numbers alone aren't trusted:
