@@ -5,7 +5,7 @@
  * Only series with books in sections that allow recommendations (not Children's or Manga).
  */
 import { db } from './db';
-import { lastNameKey, titleKey } from './books';
+import { lastNameKey, sameTitle, titleKey } from './books';
 import { HardcoverError, findSeries, pause, seriesBooks, seriesForIsbn } from './hardcover';
 
 const DUE = `s.status = 'tracking'
@@ -106,10 +106,11 @@ async function syncOne(s: { id: number; name: string; hardcover_id: number | nul
     d.prepare(`UPDATE series SET hardcover_id = ?, last_checked = datetime('now'), sync_note = NULL WHERE id = ?`).bind(hcId, s.id),
   );
 
-  // 3. Link the books you own to their Hardcover entries (same title, or same series number).
+  // 3. Link the books you own to their Hardcover entries by title. Series numbers alone aren't trusted:
+  //    your catalog and Hardcover can number prequels and spin-offs differently, and a wrong link would
+  //    hide a book you don't own. A book you own under another title shows as missing; Skip clears it.
   for (const w of owned.filter((x) => !x.hardcover_id)) {
-    const tk = titleKey(w.title);
-    const m = list.entries.find((e) => titleKey(e.title) === tk) ?? (w.series_pos !== null ? list.entries.find((e) => e.position === w.series_pos) : undefined);
+    const m = list.entries.find((e) => sameTitle(e.title, w.title));
     if (m) stmts.push(d.prepare('UPDATE works SET hardcover_id = ? WHERE id = ?').bind(m.bookId, w.id));
   }
   await d.batch(stmts);

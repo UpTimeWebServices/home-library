@@ -53,6 +53,7 @@ export function titleKey(t: string): string {
     .toLowerCase()
     .replace(/\s*[:(\[].*$/, '')
     .replace(/^(the|a|an)\s+/, '')
+    .replace(/[’']/g, '')
     .replace(/&/g, 'and')
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
@@ -91,4 +92,22 @@ export function sectionFromSubjects(subjects: string[]): string | null {
     if (re.test(text)) return section;
   }
   return 'Nonfiction';
+}
+
+/** Whole title, normalised but keeping subtitles ("The Ashport Archives: Search for the Phoenix"). */
+const fullKey = (t: string): string =>
+  t.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[’']/g, '').replace(/&/g, 'and').replace(/[^a-z0-9]+/g, ' ').trim();
+
+/**
+ * Same book under slightly different titles? Matches "Search for the Phoenix" with
+ * "The Ashport Archives: Search for The Phoenix" and "A Graveyard for Lunatics" with its subtitled form.
+ */
+export function sameTitle(a: string, b: string): boolean {
+  const ka = titleKey(a);
+  const kb = titleKey(b);
+  if (ka === kb) return true;
+  const fa = fullKey(a);
+  const fb = fullKey(b);
+  const contains = (hay: string, needle: string) => needle.length >= 6 && ` ${hay} `.includes(` ${needle} `);
+  return contains(fb, ka) || contains(fa, kb);
 }

@@ -63,7 +63,8 @@ const mode = ['verify', 'add', 'check'].includes(Astro.url.searchParams.get('mod
     isbn: string | null;
     found: Found | null;
     suggestedSection: string | null;
-    seriesSuggestion?: { name: string; position: number | null } | null;
+    seriesSuggestion?: { name: string; position: number | null; gap: boolean } | null;
+    wishlist?: { id: number; notes: string | null; added_by: string | null }[];
     owned: CopyHit[];
     candidates: WorkHit[];
     error?: string;
@@ -227,10 +228,17 @@ const mode = ['verify', 'add', 'check'].includes(Astro.url.searchParams.get('mod
         'ok',
       );
     } else {
+      const wish = l.wishlist ?? [];
+      const ser = l.seriesSuggestion;
       html = panel(
         `<div class="flex gap-3">${l.found ? thumb(l.found.coverId, l.found.coverUrl, null) : ''}<div class="min-w-0"><p class="text-sm font-medium text-brass">Not in your library</p>${foundLine(l.found, l.isbn)}</div></div>
+         ${wish.length ? `<p class="mt-3 rounded-md bg-green-soft px-3 py-2 text-sm font-medium text-green">On your wishlist${wish[0]!.added_by ? ` (added by ${esc(wish[0]!.added_by)})` : ''}${wish[0]!.notes ? `<span class="mt-0.5 block font-normal text-ink">${esc(wish[0]!.notes)}</span>` : ''}</p>` : ''}
+         ${ser?.gap ? `<p class="mt-3 rounded-md bg-green-soft px-3 py-2 text-sm font-medium text-green">Fills a gap in ${esc(ser.name)}${ser.position !== null ? ` (#${ser.position})` : ''}</p>` : ''}
          ${l.candidates.length ? `<p class="mt-3 text-sm text-ink-soft">Close matches: ${l.candidates.map((c) => `<a class="underline" href="/book/${c.workId}">${esc(c.title)}</a>`).join(', ')}</p>` : ''}
-         <button type="button" id="to-add" class="mt-3 font-medium text-green hover:underline">Bought it? Add it to the library</button>`,
+         <div class="mt-3 flex flex-wrap gap-x-5 gap-y-2">
+           <button type="button" id="to-add" class="font-medium text-green hover:underline">Bought it? Add it to the library</button>
+           ${wish.length || !l.found ? '' : `<button type="button" id="to-wish" class="font-medium text-green hover:underline">Add to wishlist</button>`}
+         </div>`,
         'warn',
       );
     }
@@ -238,6 +246,18 @@ const mode = ['verify', 'add', 'check'].includes(Astro.url.searchParams.get('mod
     document.getElementById('to-add')?.addEventListener('click', () => {
       setMode('add', true);
       renderAdd(l);
+    });
+    document.getElementById('to-wish')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget as HTMLButtonElement;
+      btn.disabled = true;
+      const f = l.found!;
+      const ser = l.seriesSuggestion;
+      const res = await fetch('/api/wishlist', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: f.title, author: f.authors.join(', '), isbn: l.isbn, coverId: f.coverId, notes: ser ? `${ser.name}${ser.position !== null ? ` #${ser.position}` : ''}` : null }),
+      });
+      btn.outerHTML = res.ok ? '<span class="font-medium text-green">Added to your wishlist</span>' : '<span class="text-[#a23b2a]">Could not add. Try again.</span>';
     });
   }
 
@@ -426,7 +446,7 @@ const mode = ['verify', 'add', 'check'].includes(Astro.url.searchParams.get('mod
         location: fd.get('location'),
       };
       const res = await fetch('/api/books', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-      const j = (await res.json()) as { workId?: number; placement?: Placement; onStack?: boolean; error?: string };
+      const j = (await res.json()) as { workId?: number; placement?: Placement; onStack?: boolean; wishFulfilled?: number; error?: string };
       if (!res.ok || !j.placement) {
         $('add-error').textContent = j.error ?? 'Could not add the book. Try again.';
         btn.disabled = false;
@@ -435,7 +455,7 @@ const mode = ['verify', 'add', 'check'].includes(Astro.url.searchParams.get('mod
       }
       result.innerHTML =
         panel(
-          `<p class="text-sm font-medium text-green">Added to the library</p>${foundLine(f, l.isbn)}
+          `<p class="text-sm font-medium text-green">Added to the library${j.wishFulfilled ? ' and ticked off your wishlist' : ''}</p>${foundLine(f, l.isbn)}
            <p class="mt-3 text-sm text-ink-soft">${j.onStack ? 'For now: Guest Room, dresser stack. It belongs on' : 'File it on'}</p>
            ${describe(j.placement)}
            <a href="/book/${j.workId}" class="mt-2 inline-block text-sm text-green underline">Open book</a>`,

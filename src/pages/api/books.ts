@@ -8,6 +8,7 @@ import { db } from '@/lib/db';
 import { displayAuthor, sortTitle, toIsbn13 } from '@/lib/books';
 import { json, num, str } from '@/lib/http';
 import { placeBook } from '@/lib/filing';
+import { fulfil } from '@/lib/wishlist';
 
 export const POST: APIRoute = async ({ request, locals }) => {
   const b = (await request.json().catch(() => ({}))) as Record<string, unknown>;
@@ -74,5 +75,6 @@ export const POST: APIRoute = async ({ request, locals }) => {
     .first<{ id: number }>();
   await d.prepare('INSERT INTO activity (user, action, target) VALUES (?, ?, ?)').bind(user, 'add', `copy:${copy!.id}`).run();
 
-  return json({ workId, copyId: copy!.id, placement, onStack: b.location === 'stack' });
+  const wishFulfilled = await fulfil(copy!.id, isbn, title);
+  return json({ workId, copyId: copy!.id, placement, onStack: b.location === 'stack', wishFulfilled });
 };

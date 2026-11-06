@@ -1,0 +1,283 @@
+---
+import Layout from '@/layouts/Layout.astro';
+import { recommendations, wishList } from '@/lib/wishlist';
+
+const tab = Astro.url.searchParams.get('tab') === 'series' ? 'series' : 'list';
+const [items, rec] = await Promise.all([wishList(), recommendations()]);
+const missingMain = rec.groups.reduce((n, g) => n + g.missing.filter((m) => m.main).length, 0);
+const fmtDate = (s: string | null) => (s ? new Date(s.replace(' ', 'T') + 'Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '');
+const isbnCover = (isbn: string | null, coverId: number | null) =>
+  coverId ? `https://covers.openlibrary.org/b/id/${coverId}-M.jpg` : isbn ? `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg?default=false` : null;
+const pos = (p: number | null) => (p === null ? '' : `#${p}`);
+---
+
+<Layout title="Wishlist">
+  <div class="wrap max-w-3xl py-5">
+    <div class="grid grid-cols-2 overflow-hidden rounded-lg border border-rule bg-card text-sm font-medium" role="tablist" aria-label="Wishlist">
+      <a href="?tab=list" role="tab" aria-selected={tab === 'list'} class="py-2.5 text-center aria-selected:bg-green aria-selected:text-paper">Our list <span class="opacity-75">({items.length})</span></a>
+      <a href="?tab=series" role="tab" aria-selected={tab === 'series'} class="border-l border-rule py-2.5 text-center aria-selected:bg-green aria-selected:text-paper">Missing from series <span class="opacity-75">({missingMain})</span></a>
+    </div>
+
+    {tab === 'list' && (
+      <section class="mt-5" aria-label="Our list">
+        <details id="add-box" class="group rounded-lg border border-rule bg-card" open={items.length === 0}>
+          <summary class="flex cursor-pointer list-none items-center justify-between px-4 py-3 font-medium">
+            Add a book to the list
+            <span aria-hidden="true" class="text-xl leading-none text-green transition-transform group-open:rotate-45">+</span>
+          </summary>
+          <form id="add-form" class="space-y-3 border-t border-rule px-4 py-4">
+            <label class="block text-sm font-medium">Title<input name="title" required class="mt-1 h-11 w-full rounded-lg border border-rule bg-paper px-3 text-base" /></label>
+            <label class="block text-sm font-medium">Author <span class="font-normal text-ink-soft">(optional)</span><input name="author" class="mt-1 h-11 w-full rounded-lg border border-rule bg-paper px-3 text-base" /></label>
+            <label class="block text-sm font-medium">Notes <span class="font-normal text-ink-soft">(edition, printing, condition…)</span>
+              <textarea name="notes" rows="2" placeholder="e.g. Only the 1st US hardcover with the red jacket" class="mt-1 w-full rounded-lg border border-rule bg-paper px-3 py-2 text-base"></textarea></label>
+            <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="top" class="size-4 accent-green" /> Top priority</label>
+            <p id="add-error" class="text-sm text-[#a23b2a]"></p>
+            <button class="w-full rounded-lg bg-green py-2.5 font-medium text-paper">Add to our list</button>
+          </form>
+        </details>
+
+        {items.length === 0 ? (
+          <p class="mt-8 text-center text-ink-soft">Nothing on the list yet. Add books you're hunting for, or pick them from Missing from series.</p>
+        ) : (
+          <ul class="mt-4 space-y-3">
+            {items.map((w) => {
+              const cover = isbnCover(w.isbn, w.cover_id);
+              return (
+                <li class="rounded-lg border border-rule bg-card p-4" data-wish={w.id}>
+                  <div class="flex gap-3">
+                    <div class="w-12 shrink-0">
+                      <div class="cloth relative aspect-[2/3] overflow-hidden rounded-[3px]" style="--cloth:#4b5d54">
+                        {cover && <img src={cover} alt="" loading="lazy" class="absolute inset-0 size-full object-cover" onerror="this.remove()" />}
+                      </div>
+                    </div>
+                    <div class="min-w-0 flex-1">
+                      <p class="font-serif text-lg font-medium leading-snug">
+                        {w.priority === 1 && <span class="mr-1 text-brass" title="Top priority">★</span>}{w.title}
+                      </p>
+                      {w.author && <p class="text-sm text-ink-soft">{w.author}</p>}
+                      <p class="wish-notes mt-1.5 whitespace-pre-line text-sm" data-empty={!w.notes}>{w.notes}</p>
+                      <p class="mt-1.5 text-xs text-ink-soft">Added by {w.added_by ?? 'someone'} on {fmtDate(w.added_at)}</p>
+                    </div>
+                  </div>
+                  <div class="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-sm">
+                    <button type="button" data-act="edit" class="font-medium text-green hover:underline">Edit notes</button>
+                    <button type="button" data-act="star" data-top={w.priority === 1 ? '1' : '0'} class="text-ink-soft hover:text-ink hover:underline">{w.priority === 1 ? 'Remove top priority' : 'Make top priority'}</button>
+                    <button type="button" data-act="got" class="text-ink-soft hover:text-ink hover:underline">We got it</button>
+                    <button type="button" data-act="remove" class="text-ink-soft hover:text-[#a23b2a] hover:underline">Remove</button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        <p class="mt-6 text-sm text-ink-soft">Books come off the list on their own when you add them with Scan.</p>
+      </section>
+    )}
+
+    {tab === 'series' && (
+      <section class="mt-5" aria-label="Missing from series">
+        <div class="flex flex-wrap items-center justify-between gap-2 text-sm text-ink-soft">
+          <p>{missingMain} books missing across {rec.groups.filter((g) => g.missing.some((m) => m.main)).length} series. {rec.complete} series complete.</p>
+          <label class="flex items-center gap-2"><input type="checkbox" id="novellas" class="size-4 accent-green" /> Include novellas and extras</label>
+        </div>
+        <p class="mt-2 text-sm text-ink-soft">Tap <strong class="font-medium text-ink">Want</strong> to put a book on Our list, or <strong class="font-medium text-ink">Skip</strong> for one you don't want or already own under a different title. Only published books are shown.</p>
+        <div class="mt-2 flex gap-4 text-sm">
+          <button type="button" id="expand-all" class="text-green hover:underline">Expand all</button>
+          <button type="button" id="collapse-all" class="text-green hover:underline">Collapse all</button>
+        </div>
+
+        <ul class="mt-3 space-y-2" id="groups">
+          {rec.groups.map((g) => {
+            const mainMissing = g.missing.filter((m) => m.main).length;
+            return (
+              <li data-series={g.id} data-main={mainMissing} class:list={['rounded-lg border border-rule bg-card', mainMissing === 0 && 'extras-only hidden']}>
+                <details class="group" data-key={`s${g.id}`}>
+                  <summary class="flex cursor-pointer list-none items-center gap-3 px-4 py-3">
+                    <svg aria-hidden="true" viewBox="0 0 20 20" class="size-5 shrink-0 text-ink-soft transition-transform group-open:rotate-90" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5l5 5-5 5" /></svg>
+                    <span class="min-w-0 flex-1">
+                      <span class="block truncate font-serif text-lg font-medium">{g.name}</span>
+                      {g.author && <span class="block truncate text-sm text-ink-soft">{g.author}</span>}
+                    </span>
+                    <span class="shrink-0 text-right text-sm">
+                      <span class="block font-medium tabular-nums">{g.owned} of {g.total}</span>
+                      <span class="block text-xs text-ink-soft"><span class="count-main">{mainMissing}</span> missing</span>
+                    </span>
+                  </summary>
+                  <div class="border-t border-rule px-4 pb-3">
+                    <ul class="divide-y divide-rule">
+                      {g.missing.map((m) => (
+                        <li data-entry={m.id} class:list={['flex items-center gap-3 py-2.5', !m.main && 'extra hidden']}>
+                          <span class="w-10 shrink-0 text-sm tabular-nums text-ink-soft">{pos(m.position)}</span>
+                          <span class="min-w-0 flex-1">
+                            <span class="block">{m.title}</span>
+                            <span class="block text-xs text-ink-soft">{[m.year, !m.main && 'novella or extra'].filter(Boolean).join(', ')}</span>
+                          </span>
+                          {m.onList ? (
+                            <span class="shrink-0 text-xs font-medium text-green">On our list</span>
+                          ) : (
+                            <span class="flex shrink-0 gap-3 text-sm">
+                              <button type="button" data-act="want" data-title={m.title} data-author={g.author ?? ''} data-sname={g.name} data-pos={m.position ?? ''} class="font-medium text-green hover:underline">Want</button>
+                              <button type="button" data-act="dismiss" class="text-ink-soft hover:underline" aria-label={`Not interested in ${m.title}`}>Skip</button>
+                            </span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                    <button type="button" data-act="hide" class="mt-2 text-sm text-ink-soft hover:text-[#a23b2a] hover:underline">Stop recommending {g.name}</button>
+                  </div>
+                </details>
+              </li>
+            );
+          })}
+        </ul>
+        {rec.groups.length === 0 && <p class="mt-8 text-center text-ink-soft">No gaps found. If you haven't synced series yet, go to More and run Sync series now.</p>}
+
+        {(rec.hidden.length > 0 || rec.dismissed.length > 0) && (
+          <details class="mt-8 rounded-lg border border-rule bg-card">
+            <summary class="cursor-pointer px-4 py-3 font-medium">Hidden ({rec.hidden.length} series, {rec.dismissed.length} books)</summary>
+            <div class="space-y-4 border-t border-rule px-4 py-3 text-sm">
+              {rec.hidden.length > 0 && (
+                <div>
+                  <h3 class="font-medium">Series you stopped</h3>
+                  <ul class="mt-1 divide-y divide-rule">
+                    {rec.hidden.map((h) => (
+                      <li class="flex items-center justify-between gap-3 py-2" data-hidden={h.id}>
+                        <span>{h.name}<span class="block text-xs text-ink-soft">Hidden by {h.hidden_by ?? 'someone'} on {fmtDate(h.hidden_at)}</span></span>
+                        <button type="button" data-act="restore-series" class="font-medium text-green hover:underline">Restore</button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {rec.dismissed.length > 0 && (
+                <div>
+                  <h3 class="font-medium">Books you skipped</h3>
+                  <ul class="mt-1 divide-y divide-rule">
+                    {rec.dismissed.map((x) => (
+                      <li class="flex items-center justify-between gap-3 py-2" data-dismissed={x.id}>
+                        <span>{x.title}<span class="block text-xs text-ink-soft">{x.series} {pos(x.position)}{x.dismissed_by ? `, skipped by ${x.dismissed_by}` : ''}</span></span>
+                        <button type="button" data-act="restore-entry" class="font-medium text-green hover:underline">Restore</button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </details>
+        )}
+      </section>
+    )}
+  </div>
+</Layout>
+
+<script>
+  const post = (url: string, body: unknown, method = 'POST') =>
+    fetch(url, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const store = {
+    get: (k: string) => { try { return localStorage.getItem(k); } catch { return null; } },
+    set: (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } },
+  };
+
+  // ---------- Our list ----------
+  const addForm = document.getElementById('add-form') as HTMLFormElement | null;
+  addForm?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(addForm);
+    const res = await post('/api/wishlist', { title: fd.get('title'), author: fd.get('author'), notes: fd.get('notes'), priority: fd.get('top') ? 1 : 2 });
+    if (res.ok) location.reload();
+    else document.getElementById('add-error')!.textContent = ((await res.json()) as { error?: string }).error ?? 'Could not add. Try again.';
+  });
+
+  document.querySelectorAll<HTMLElement>('[data-wish]').forEach((li) => {
+    const id = li.dataset.wish;
+    li.addEventListener('click', async (e) => {
+      const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-act]');
+      if (!btn) return;
+      const act = btn.dataset.act;
+      if (act === 'edit') {
+        const p = li.querySelector<HTMLElement>('.wish-notes')!;
+        if (li.querySelector('textarea')) return;
+        const ta = document.createElement('textarea');
+        ta.rows = 3;
+        ta.value = p.textContent ?? '';
+        ta.placeholder = 'Edition, printing, condition…';
+        ta.className = 'mt-2 w-full rounded-lg border border-rule bg-paper px-3 py-2 text-base';
+        const save = document.createElement('button');
+        save.type = 'button';
+        save.textContent = 'Save notes';
+        save.className = 'mt-2 rounded-lg bg-green px-4 py-2 text-sm font-medium text-paper';
+        p.after(ta, save);
+        p.hidden = true;
+        ta.focus();
+        save.addEventListener('click', async () => {
+          const res = await post(`/api/wishlist/${id}`, { notes: ta.value }, 'PATCH');
+          if (!res.ok) return;
+          p.textContent = ta.value.trim();
+          p.hidden = false;
+          ta.remove();
+          save.remove();
+        });
+      } else if (act === 'star') {
+        if ((await post(`/api/wishlist/${id}`, { priority: btn.dataset.top === '1' ? 2 : 1 }, 'PATCH')).ok) location.reload();
+      } else if (act === 'got' || act === 'remove') {
+        const res = act === 'got' ? await post(`/api/wishlist/${id}`, { action: 'got' }) : await fetch(`/api/wishlist/${id}`, { method: 'DELETE' });
+        if (res.ok) li.remove();
+      }
+    });
+  });
+
+  // ---------- Missing from series ----------
+  const groups = document.getElementById('groups');
+  if (groups) {
+    const nov = document.getElementById('novellas') as HTMLInputElement;
+    const applyNovellas = () => {
+      groups.querySelectorAll('.extra').forEach((el) => el.classList.toggle('hidden', !nov.checked));
+      groups.querySelectorAll('.extras-only').forEach((el) => el.classList.toggle('hidden', !nov.checked));
+    };
+    nov.checked = store.get('novellas') === '1';
+    nov.addEventListener('change', () => { store.set('novellas', nov.checked ? '1' : '0'); applyNovellas(); });
+    applyNovellas();
+
+    // Remember which series each viewer left open.
+    const open = new Set<string>(JSON.parse(store.get('open-series') ?? '[]') as string[]);
+    const details = [...groups.querySelectorAll<HTMLDetailsElement>('details[data-key]')];
+    details.forEach((dEl) => {
+      dEl.open = open.has(dEl.dataset.key!);
+      dEl.addEventListener('toggle', () => {
+        dEl.open ? open.add(dEl.dataset.key!) : open.delete(dEl.dataset.key!);
+        store.set('open-series', JSON.stringify([...open]));
+      });
+    });
+    document.getElementById('expand-all')!.addEventListener('click', () => details.forEach((dEl) => (dEl.open = true)));
+    document.getElementById('collapse-all')!.addEventListener('click', () => details.forEach((dEl) => (dEl.open = false)));
+
+    groups.addEventListener('click', async (e) => {
+      const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-act]');
+      if (!btn) return;
+      const group = btn.closest<HTMLElement>('[data-series]')!;
+      const row = btn.closest<HTMLElement>('[data-entry]');
+      if (btn.dataset.act === 'hide') {
+        if ((await post(`/api/series/${group.dataset.series}`, { action: 'hide' })).ok) group.remove();
+      } else if (btn.dataset.act === 'dismiss' && row) {
+        if (!(await post(`/api/series/entry/${row.dataset.entry}`, { dismissed: true })).ok) return;
+        row.remove();
+        const counter = group.querySelector('.count-main')!;
+        if (!row.classList.contains('extra')) counter.textContent = String(Math.max(0, Number(counter.textContent) - 1));
+      } else if (btn.dataset.act === 'want' && row) {
+        const notes = `${btn.dataset.sname}${btn.dataset.pos ? ` #${btn.dataset.pos}` : ''}`;
+        const res = await post('/api/wishlist', { title: btn.dataset.title, author: btn.dataset.author, notes, seriesEntryId: Number(row.dataset.entry) });
+        if (res.ok) btn.parentElement!.outerHTML = '<span class="shrink-0 text-xs font-medium text-green">On our list</span>';
+      }
+    });
+  }
+
+  // ---------- Hidden ----------
+  document.querySelectorAll<HTMLElement>('[data-hidden], [data-dismissed]').forEach((li) =>
+    li.querySelector('button')!.addEventListener('click', async () => {
+      const res = li.dataset.hidden
+        ? await post(`/api/series/${li.dataset.hidden}`, { action: 'restore' })
+        : await post(`/api/series/entry/${li.dataset.dismissed}`, { dismissed: false });
+      if (res.ok) location.reload();
+    }),
+  );
+</script>

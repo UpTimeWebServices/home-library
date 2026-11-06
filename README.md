@@ -20,6 +20,15 @@ Live at **https://home-library.aron-da0.workers.dev** (Access sign-in required).
 
 Filing uses the planned layout (Destination Map): section shelves in order, author last name, series in reading order, then title.
 
+## Wishlist
+
+`/wishlist` has two tabs:
+
+- **Our list:** books you want, with notes for the edition/printing/condition, top-priority star, and who added it. "We got it" or adding the book with Scan takes it off the list.
+- **Missing from series:** published books from series you own (not Children's or Manga), grouped by series and collapsible, most-complete first. **Want** copies a book to Our list; **Skip** drops one book; **Stop recommending** hides a whole series. Everything hidden can be restored from the Hidden section. Novellas, part-volumes and extras (non-whole series numbers) are behind a toggle.
+
+Scan's "Do we own it?" also says when a book is on the wishlist or fills a gap in a series you own, and can add it to the wishlist.
+
 ## Hardcover (series data)
 
 Series lists come from the Hardcover GraphQL API (server-side only; 60 requests/minute; tokens expire every January 1).

@@ -9,10 +9,17 @@ interface Props {
 const { title } = Astro.props;
 const user = Astro.locals.user;
 const path = Astro.url.pathname;
+const icons = {
+  library: 'M4 4h3v16H4zM9 4h3v16H9zM14.2 4.6l2.9-.8 4.1 15.5-2.9.8z',
+  scan: 'M3 7V4h4M17 4h4v3M21 17v3h-4M7 20H3v-3M6 12h12',
+  wishlist: 'M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z',
+  more: 'M5 12h.01M12 12h.01M19 12h.01',
+};
 const nav = [
-  { href: '/', label: 'Library', active: path === '/' || path.startsWith('/book') },
-  { href: '/scan', label: 'Scan', active: path.startsWith('/scan') },
-  { href: '/more', label: 'More', active: path.startsWith('/more') },
+  { href: '/', label: 'Library', icon: icons.library, active: path === '/' || path.startsWith('/book') },
+  { href: '/scan', label: 'Scan', icon: icons.scan, active: path.startsWith('/scan') },
+  { href: '/wishlist', label: 'Wishlist', icon: icons.wishlist, active: path.startsWith('/wishlist') },
+  { href: '/more', label: 'More', icon: icons.more, active: path.startsWith('/more') },
 ];
 ---
 
@@ -26,24 +33,39 @@ const nav = [
     <title>{title ? `${title} — Dream House Library` : 'Dream House Library'}</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   </head>
-  <body class="min-h-dvh">
+  <body class="min-h-dvh pb-[calc(4rem+env(safe-area-inset-bottom))] sm:pb-0">
     <header class="border-b border-rule bg-paper/95 backdrop-blur supports-[backdrop-filter]:bg-paper/80">
       <div class="wrap flex h-14 items-center justify-between gap-4">
         <a href="/" class="whitespace-nowrap font-serif text-lg font-semibold tracking-tight sm:text-xl [font-variation-settings:'opsz'_72,'SOFT'_50]">
           Dream House Library
         </a>
-        <nav aria-label="Main" class="flex items-center gap-4 text-sm sm:gap-5">
+        <nav aria-label="Main" class="hidden items-center gap-5 text-sm sm:flex">
           {nav.map((n) => (
             <a href={n.href} aria-current={n.active ? 'page' : undefined} class:list={['hover:text-green', n.active ? 'font-semibold text-green' : 'text-ink-soft']}>
               {n.label}
             </a>
           ))}
-          {user && <span class="hidden text-ink-soft sm:inline">{user.name}</span>}
+          {user && <span class="text-ink-soft">{user.name}</span>}
         </nav>
+        {user && <span class="text-sm text-ink-soft sm:hidden">{user.name}</span>}
       </div>
     </header>
     <main>
       <slot />
     </main>
+
+    <!-- Phone: thumb-reach tab bar -->
+    <nav aria-label="Main" class="fixed inset-x-0 bottom-0 z-40 border-t border-rule bg-paper/95 pb-[env(safe-area-inset-bottom)] backdrop-blur sm:hidden">
+      <ul class="grid grid-cols-4">
+        {nav.map((n) => (
+          <li>
+            <a href={n.href} aria-current={n.active ? 'page' : undefined} class:list={['flex h-16 flex-col items-center justify-center gap-1 text-[0.7rem]', n.active ? 'font-semibold text-green' : 'text-ink-soft']}>
+              <svg aria-hidden="true" viewBox="0 0 24 24" class="size-6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d={n.icon} /></svg>
+              {n.label}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </nav>
   </body>
 </html>
