@@ -108,6 +108,119 @@ export async function seriesBooks(seriesId: number): Promise<{ name: string; ent
   };
 }
 
+/* ───────────── Books and their tags ───────────── */
+
+export interface HcBookHit {
+  id: number;
+  title: string;
+  subtitle: string | null;
+  slug: string | null;
+  authors: string[];
+  altTitles: string[];
+  usersCount: number;
+  tags: HcTag[]; // top 5 per category, straight from the search index
+}
+export type TagCategory = 'genre' | 'mood' | 'tag' | 'warning';
+export interface HcTag { category: TagCategory; tag: string; weight: number | null }
+
+const CATEGORY: Record<string, TagCategory> = { genre: 'genre', genres: 'genre', mood: 'mood', moods: 'mood', tag: 'tag', tags: 'tag', 'content warning': 'warning', content_warnings: 'warning', 'content warnings': 'warning' };
+/** How many of each kind to keep, most-applied first. */
+export const TAG_LIMIT: Record<TagCategory, number> = { genre: 10, mood: 8, tag: 12, warning: 12 };
+
+const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
+
+interface BookDoc {
+  id: string | number; title?: string; subtitle?: string; slug?: string; author_names?: unknown; alternative_titles?: unknown;
+  users_count?: number; genres?: unknown; moods?: unknown; tags?: unknown; content_warnings?: unknown;
+}
+
+/** Hardcover's book search (title, author, series, ISBN), most relevant then most read. */
+export async function searchBooks(q: string, perPage = 8): Promise<HcBookHit[]> {
+  const d = await hc<{ search: { results: { hits?: { document: BookDoc }[] } | null } }>(
+    'query ($q: String!, $n: Int!) { search(query: $q, query_type: "Book", per_page: $n, page: 1) { results } }',
+    { q, n: perPage },
+  );
+  return (d.search.results?.hits ?? [])
+    .map((h) => h.document)
+    .filter((b) => b?.id && b.title)
+    .map((b) => ({
+      id: Number(b.id),
+      title: b.title!,
+      subtitle: b.subtitle ?? null,
+      slug: b.slug ?? null,
+      authors: strs(b.author_names),
+      altTitles: strs(b.alternative_titles),
+      usersCount: b.users_count ?? 0,
+      tags: [
+        ...strs(b.genres).map((tag) => ({ category: 'genre' as const, tag, weight: null })),
+        ...strs(b.moods).map((tag) => ({ category: 'mood' as const, tag, weight: null })),
+        ...strs(b.tags).map((tag) => ({ category: 'tag' as const, tag, weight: null })),
+        ...strs(b.content_warnings).map((tag) => ({ category: 'warning' as const, tag, weight: null })),
+      ],
+    }));
+}
+
+/**
+ * Hardcover keeps every reader tag on a book in `cached_tags`, keyed by category
+ * ({"Genre": [{tag, count}, …], "Mood": …, "Tag": …, "Content Warning": …}), most-applied first.
+ * Parsed defensively: plain strings and other key spellings are accepted too.
+ */
+export function parseCachedTags(raw: unknown): HcTag[] {
+  let v = raw;
+  if (typeof v === 'string') {
+    try { v = JSON.parse(v); } catch { return []; }
+  }
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return [];
+  const out: HcTag[] = [];
+  for (const [key, list] of Object.entries(v as Record<string, unknown>)) {
+    const category = CATEGORY[key.toLowerCase()];
+    if (!category || !Array.isArray(list)) continue;
+    const seen = new Set<string>();
+    for (const item of list) {
+      const tag = typeof item === 'string' ? item : (item as { tag?: unknown; name?: unknown })?.tag ?? (item as { name?: unknown })?.name;
+      if (typeof tag !== 'string' || !tag.trim()) continue;
+      const k = tag.trim().toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      const count = typeof item === 'object' ? Number((item as { count?: unknown }).count) : NaN;
+      out.push({ category, tag: tag.trim(), weight: Number.isFinite(count) ? count : null });
+      if (seen.size >= TAG_LIMIT[category]) break;
+    }
+  }
+  return out;
+}
+
+/** Full tag lists for several Hardcover books in one request. Null if Hardcover won't give them. */
+let cachedTagsBroken = false;
+export async function bookTags(ids: number[]): Promise<Map<number, HcTag[]> | null> {
+  if (!ids.length || cachedTagsBroken) return cachedTagsBroken ? null : new Map();
+  try {
+    const d = await hc<{ books: { id: number; cached_tags: unknown }[] }>(
+      'query ($ids: [Int!]) { books(where: {id: {_in: $ids}}) { id cached_tags } }',
+      { ids },
+    );
+    return new Map(d.books.map((b) => [b.id, parseCachedTags(b.cached_tags)]));
+  } catch (e) {
+    // A schema change (field gone) shouldn't stop the sync: fall back to the search index's top 5s.
+    if (e instanceof HardcoverError && /field|not found in type|validation/i.test(e.message)) {
+      cachedTagsBroken = true;
+      return null;
+    }
+    throw e;
+  }
+}
+
+/** One book by its hardcover.app/books/<slug> address (for fixing a wrong match by hand). */
+export async function bookBySlug(slug: string): Promise<{ id: number; title: string; slug: string; tags: HcTag[] } | null> {
+  const d = await hc<{ books: { id: number; title: string; slug: string; cached_tags: unknown }[] }>(
+    'query ($s: String!) { books(where: {slug: {_eq: $s}}, limit: 1) { id title slug cached_tags } }',
+    { s: slug },
+  );
+  const b = d.books[0];
+  if (!b) return null;
+  return { id: b.id, title: b.title, slug: b.slug, tags: parseCachedTags(b.cached_tags) };
+}
+
 /* ───────────── English titles ─────────────
  * A Hardcover book's own title is often the original-language one ("Panserhjerte").
  * The most-read English edition gives the title you'd see in a US bookstore ("The Leopard").

@@ -26,7 +26,7 @@ const data = JSON.stringify(rows).replace(/</g, '\\u003c');
           inputmode="search"
           autocomplete="off"
           enterkeyhint="search"
-          placeholder="Title, author or series"
+          placeholder="Title, author, series or genre"
           class="h-11 w-full rounded-lg border border-rule bg-card pl-11 pr-4 text-base text-ink placeholder:text-ink-soft/80 focus:border-green focus:outline-none focus:ring-2 focus:ring-green/25"
         />
       </label>
@@ -50,6 +50,7 @@ const data = JSON.stringify(rows).replace(/</g, '\\u003c');
           <option value="series">In a series</option>
           <option value="moves">Moving in the re-file</option>
           <option value="noauthor">No author</option>
+          <option value="notags">No genres yet</option>
         </select>
         <select id="sort" aria-label="Sort" class="rounded-md border border-rule bg-card py-1 pl-2 pr-1 text-ink">
           <option value="author">By author</option>
@@ -71,6 +72,7 @@ const data = JSON.stringify(rows).replace(/</g, '\\u003c');
   </div>
 
   <div class="wrap py-5">
+    <div id="tagbar" hidden class="mb-4 flex flex-wrap items-center gap-2 text-sm"></div>
     <ol id="results" class="grid grid-cols-3 gap-x-3 gap-y-6 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6"></ol>
     <div id="empty" hidden class="mx-auto max-w-md py-16 text-center">
       <p class="font-serif text-2xl">Not in the library</p>
@@ -101,7 +103,18 @@ const data = JSON.stringify(rows).replace(/</g, '\\u003c');
 
   const norm = (s: string | null) => (s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
   const esc = (s: string | null) => (s ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
-  const hay = rows.map((r) => norm([r[1], r[2], r[4], r[6]].join(' ')));
+  const tagsOf = rows.map((r) => (r[17] ? [...new Set(r[17].split('|'))] : []));
+  const hay = rows.map((r, i) => norm([r[1], r[2], r[4], r[6], ...tagsOf[i]!].join(' ')));
+  const tagNorms = tagsOf.map((ts) => new Set(ts.map(norm)));
+  // Every tag in the library with how many books carry it (display spelling = most common one).
+  const tagCount = new Map<string, { label: string; n: number }>();
+  tagsOf.forEach((ts) => ts.forEach((t) => {
+    const k = norm(t);
+    const e = tagCount.get(k);
+    if (e) e.n++;
+    else tagCount.set(k, { label: t.charAt(0).toUpperCase() + t.slice(1), n: 1 });
+  }));
+  const tagbar = $('tagbar');
   const byId = new Map(rows.map((r) => [r[0], r]));
   const shelfOrder = new Map(rows.map((r, i) => [r[0], i]));
 
@@ -112,6 +125,7 @@ const data = JSON.stringify(rows).replace(/</g, '\\u003c');
     section: params.get('s') ?? '',
     filter: params.get('f') ?? '',
     sort: params.get('sort') ?? 'author',
+    tag: params.get('t') ?? '',
     view: params.get('view') ?? (() => { try { return localStorage.getItem('view'); } catch { return null; } })() ?? 'grid',
   };
   qEl.value = state.q;
@@ -123,6 +137,7 @@ const data = JSON.stringify(rows).replace(/</g, '\\u003c');
     if (state.q) p.set('q', state.q);
     if (state.section) p.set('s', state.section);
     if (state.filter) p.set('f', state.filter);
+    if (state.tag) p.set('t', state.tag);
     if (state.sort !== 'author') p.set('sort', state.sort);
     if (state.view !== 'grid') p.set('view', state.view);
     history.replaceState(null, '', p.size ? `?${p}` : location.pathname);
@@ -139,6 +154,8 @@ const data = JSON.stringify(rows).replace(/</g, '\\u003c');
       if (state.filter === 'series' && !r[6]) return false;
       if (state.filter === 'moves' && !r[15]) return false;
       if (state.filter === 'noauthor' && r[2]) return false;
+      if (state.filter === 'notags' && r[17]) return false;
+      if (state.tag && !tagNorms[i]!.has(norm(state.tag))) return false;
       return tokens.every((t) => hay[i]!.includes(t));
     });
     if (state.sort === 'title') matched.sort((a, b) => a[3].localeCompare(b[3], undefined, { sensitivity: 'base' }));
@@ -149,7 +166,31 @@ const data = JSON.stringify(rows).replace(/</g, '\\u003c');
     const n = matched.length;
     countEl.textContent = `${n.toLocaleString()} ${n === 1 ? 'title' : 'titles'}`;
     emptyEl.hidden = n > 0;
+    renderTagbar();
   }
+
+  // ---- genre/mood tags: the active one, or ones matching what's typed ----
+  function renderTagbar() {
+    const btn = (t: string, n: number, on = false) =>
+      `<button type="button" class="chip" data-tag="${esc(t)}" aria-pressed="${on}">${esc(t)} <span class="text-ink-soft">${n}</span></button>`;
+    if (state.tag) {
+      const e = tagCount.get(norm(state.tag));
+      tagbar.innerHTML = `<span class="text-ink-soft">Tagged</span>${btn(e?.label ?? state.tag, e?.n ?? 0, true)}<button type="button" data-tag="" class="text-ink-soft underline hover:text-ink">Clear</button>`;
+      tagbar.hidden = false;
+      return;
+    }
+    const q = norm(state.q);
+    const hits = q.length >= 3 ? [...tagCount.entries()].filter(([k]) => k.includes(q)).sort((a, b) => b[1].n - a[1].n).slice(0, 8) : [];
+    tagbar.innerHTML = hits.length ? `<span class="text-ink-soft">Genres &amp; tags</span>${hits.map(([, e]) => btn(e.label, e.n)).join('')}` : '';
+    tagbar.hidden = !hits.length;
+  }
+  tagbar.addEventListener('click', (e) => {
+    const b = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-tag]');
+    if (!b) return;
+    state.tag = b.getAttribute('aria-pressed') === 'true' ? '' : b.dataset.tag ?? '';
+    if (state.tag) { state.q = ''; qEl.value = ''; }
+    render();
+  });
 
   // ---- rendering ----
   const PAGE = 60;

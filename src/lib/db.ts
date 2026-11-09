@@ -5,12 +5,14 @@ export const db = (): D1Database => env.DB;
 /**
  * Compact row for the library grid, sent to the browser as JSON.
  * Tuple keeps ~1,400 rows small: [id, title, author, sortTitle, authorSort, section,
- * series, seriesPos, coverId, coverStatus, room, case, shelf, copies, special(0-2), moves(0/1), coverUrl]
+ * series, seriesPos, coverId, coverStatus, room, case, shelf, copies, special(0-2), moves(0/1), coverUrl,
+ * tags ('|'-joined genres, moods, tags and our own; null if none)]
  */
 export type LibRow = [
   number, string, string | null, string, string | null, string | null,
   string | null, number | null, number | null, string,
   string | null, string | null, string | null, number, number, number,
+  string | null,
   string | null,
 ];
 
@@ -24,7 +26,9 @@ export async function libraryRows(): Promise<LibRow[]> {
               (SELECT MAX(CASE c.special WHEN 'confirmed' THEN 2 WHEN 'suspected' THEN 1 ELSE 0 END)
                  FROM copies c WHERE c.work_id = w.id) AS sp,
               (c1.planned_shelf_id IS NOT NULL AND c1.planned_shelf_id <> c1.shelf_id) AS moves,
-              w.cover_url
+              w.cover_url,
+              (SELECT GROUP_CONCAT(t.tag, '|') FROM work_tags t
+                WHERE t.work_id = w.id AND t.hidden = 0 AND t.category <> 'warning') AS tags
          FROM works w
          LEFT JOIN series s ON s.id = w.series_id
          LEFT JOIN copies c1 ON c1.id = (SELECT MIN(id) FROM copies WHERE work_id = w.id)

@@ -8,10 +8,26 @@ const detail = Number.isInteger(id) ? await workDetail(id) : null;
 if (!detail) return new Response('Book not found', { status: 404 });
 
 const { work, copies, siblings } = detail;
-const [secRes, serRes] = await db().batch([
+const [secRes, serRes, tagRes, syncRes, allTagRes] = await db().batch([
   db().prepare('SELECT name FROM sections ORDER BY rule_order'),
   db().prepare('SELECT name FROM series ORDER BY name COLLATE NOCASE'),
+  db().prepare(
+    `SELECT category, tag, added_by FROM work_tags WHERE work_id = ? AND hidden = 0
+      ORDER BY CASE category WHEN 'genre' THEN 0 WHEN 'mood' THEN 1 WHEN 'tag' THEN 2 WHEN 'ours' THEN 3 ELSE 4 END, weight DESC, tag`,
+  ).bind(id),
+  db().prepare('SELECT * FROM tag_sync WHERE work_id = ?').bind(id),
+  db().prepare(`SELECT tag FROM work_tags WHERE hidden = 0 AND category <> 'warning' GROUP BY tag COLLATE NOCASE ORDER BY COUNT(*) DESC LIMIT 400`),
 ]);
+type Tag = { category: string; tag: string; added_by: string | null };
+const allTags = (tagRes?.results ?? []) as Tag[];
+// One chip per tag name (Hardcover can list "Horror" as both a genre and a tag); warnings are kept apart.
+const seen = new Set<string>();
+const tags = allTags.filter((t) => t.category !== 'warning' && !seen.has(t.tag.toLowerCase()) && seen.add(t.tag.toLowerCase()));
+const warnings = allTags.filter((t) => t.category === 'warning');
+const sync = (syncRes?.results?.[0] ?? null) as { status: string; hc_slug: string | null; matched_title: string | null; matched_author: string | null; note: string | null } | null;
+const tagSuggestions = ((allTagRes?.results ?? []) as { tag: string }[]).map((r) => r.tag);
+const cap = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
+const KIND: Record<string, string> = { genre: 'Genre', mood: 'Mood', tag: 'Reader tag', ours: 'Our tag' };
 const sectionNames = ((secRes?.results ?? []) as { name: string }[]).map((r) => r.name);
 const seriesNames = ((serRes?.results ?? []) as { name: string }[]).map((r) => r.name);
 const cover = coverUrl(work.cover_id, 'L', work.cover_url);
@@ -138,6 +154,67 @@ const flagText = (c: (typeof copies)[number]) =>
           </ul>
         </section>
 
+        <section class="mt-6" aria-labelledby="tags-h">
+          <div class="flex items-baseline gap-3">
+            <h2 id="tags-h" class="font-serif text-xl font-semibold">Genres &amp; moods</h2>
+            <button type="button" id="tags-edit" class="text-sm font-medium text-green hover:underline">Edit</button>
+          </div>
+          {tags.length > 0 ? (
+            <ul id="tag-list" class="mt-3 flex flex-wrap gap-1.5 text-sm">
+              {tags.map((t) => (
+                <li class="flex items-center">
+                  <a href={`/?t=${encodeURIComponent(t.tag)}`} title={KIND[t.category] + (t.added_by ? `, added by ${t.added_by}` : '')}
+                     class:list={['rounded-full px-2.5 py-0.5', t.category === 'ours' ? 'border border-brass text-brass' : t.category === 'mood' ? 'bg-rule/70 text-ink' : 'bg-green-soft text-green']}>{cap(t.tag)}</a>
+                  <button type="button" data-untag={t.tag} hidden aria-label={`Remove ${t.tag}`} class="ml-0.5 rounded-full px-1.5 text-ink-soft hover:bg-rule hover:text-ink">×</button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p class="mt-2 text-sm text-ink-soft">
+              {!sync ? 'Not loaded yet. The background sync is working through the library and will get to this book.' : 'None yet. Add your own with Edit.'}
+            </p>
+          )}
+          <form id="tag-add" hidden class="mt-3 flex gap-2">
+            <input name="tag" list="tag-suggest" placeholder="Add a tag, e.g. Dark romance" maxlength="60" class="h-10 min-w-0 flex-1 rounded-lg border border-rule bg-paper px-3 text-base" />
+            <button class="rounded-lg bg-green px-4 font-medium text-paper">Add</button>
+          </form>
+          <datalist id="tag-suggest">{tagSuggestions.map((t) => <option value={cap(t)} />)}</datalist>
+
+          {warnings.length > 0 && (
+            <details class="mt-3 text-sm">
+              <summary class="cursor-pointer text-ink-soft">Content warnings ({warnings.length})</summary>
+              <p class="mt-1">{warnings.map((w) => cap(w.tag)).join(' · ')}</p>
+            </details>
+          )}
+
+          <div id="hc-match" class="mt-3 text-xs text-ink-soft" data-id={work.id}>
+            {sync && (sync.status === 'matched' || sync.status === 'confirmed') && (
+              <p>From Hardcover{sync.matched_title && <>: {sync.hc_slug ? <a class="underline hover:text-ink" href={`https://hardcover.app/books/${sync.hc_slug}`} target="_blank" rel="noopener">{sync.matched_title}</a> : sync.matched_title}{sync.matched_author && ` by ${sync.matched_author}`}</>}. <button type="button" data-fix class="underline hover:text-ink">Wrong book?</button></p>
+            )}
+            {sync?.status === 'uncertain' && (
+              <p class="rounded-md border border-brass/50 bg-card p-3 text-sm text-ink">
+                Is this the same book as <a class="underline" href={sync.hc_slug ? `https://hardcover.app/books/${sync.hc_slug}` : undefined} target="_blank" rel="noopener">{sync.matched_title}</a>{sync.matched_author && ` by ${sync.matched_author}`} on Hardcover?
+                <span class="mt-2 flex gap-2">
+                  <button type="button" data-hc="confirm" class="rounded-md bg-green px-3 py-1 font-medium text-paper">Yes</button>
+                  <button type="button" data-fix class="rounded-md border border-rule px-3 py-1 font-medium">No</button>
+                </span>
+              </p>
+            )}
+            {sync && (sync.status === 'not_found' || sync.status === 'rejected') && (
+              <p>{sync.status === 'rejected' ? 'Marked as not on Hardcover.' : 'Hardcover didn’t have a match.'} <button type="button" data-fix class="underline hover:text-ink">Link it by hand</button></p>
+            )}
+            <form id="hc-fix" hidden class="mt-2 space-y-2 rounded-md border border-rule bg-card p-3 text-sm text-ink">
+              <label class="block">Find the book on <a class="underline" href={`https://hardcover.app/search?q=${encodeURIComponent(work.title + ' ' + (work.author ?? ''))}`} target="_blank" rel="noopener">Hardcover</a> and paste its link:
+                <input name="url" placeholder="https://hardcover.app/books/…" class="mt-1 h-10 w-full rounded-lg border border-rule bg-paper px-3 text-base" /></label>
+              <div class="flex flex-wrap gap-2">
+                <button class="rounded-md bg-green px-3 py-1 font-medium text-paper">Use this book</button>
+                <button type="button" data-hc="reject" class="rounded-md border border-rule px-3 py-1 font-medium">It isn’t on Hardcover</button>
+              </div>
+            </form>
+            <p id="hc-msg" class="mt-1 text-sm text-[#a23b2a]" aria-live="polite"></p>
+          </div>
+        </section>
+
         {work.notes && (
           <section class="mt-6">
             <h2 class="font-serif text-xl font-semibold">Notes</h2>
@@ -195,6 +272,48 @@ const flagText = (c: (typeof copies)[number]) =>
     });
     if (res.ok) location.reload();
     else document.getElementById('edit-error')!.textContent = ((await res.json().catch(() => ({}))) as { error?: string }).error ?? 'Could not save.';
+  });
+
+  // ---- tags ----
+  const workId = (document.getElementById('cover') as HTMLElement).dataset.id;
+  const tagForm = document.getElementById('tag-add') as HTMLFormElement;
+  document.getElementById('tags-edit')!.addEventListener('click', (e) => {
+    const on = tagForm.hidden;
+    tagForm.hidden = !on;
+    document.querySelectorAll<HTMLButtonElement>('[data-untag]').forEach((b) => (b.hidden = !on));
+    (e.currentTarget as HTMLButtonElement).textContent = on ? 'Done' : 'Edit';
+    if (on) tagForm.querySelector('input')!.focus();
+  });
+  tagForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const tag = (tagForm.elements.namedItem('tag') as HTMLInputElement).value.trim();
+    if (!tag) return;
+    const res = await fetch(`/api/works/${workId}/tags`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tag }) });
+    if (res.ok) location.reload();
+  });
+  document.querySelectorAll<HTMLButtonElement>('[data-untag]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const res = await fetch(`/api/works/${workId}/tags`, { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tag: b.dataset.untag }) });
+      if (res.ok) b.closest('li')!.remove();
+    }),
+  );
+
+  // ---- Hardcover match: confirm, fix or reject ----
+  const fixForm = document.getElementById('hc-fix') as HTMLFormElement;
+  const hcMsg = document.getElementById('hc-msg')!;
+  async function hcAction(body: Record<string, string>) {
+    hcMsg.textContent = '';
+    const res = await fetch(`/api/works/${workId}/hardcover`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    if (res.ok) location.reload();
+    else hcMsg.textContent = ((await res.json().catch(() => ({}))) as { error?: string }).error ?? 'Something went wrong.';
+  }
+  document.querySelectorAll<HTMLButtonElement>('[data-fix]').forEach((b) =>
+    b.addEventListener('click', () => { fixForm.hidden = false; fixForm.querySelector('input')!.focus(); }),
+  );
+  document.querySelectorAll<HTMLButtonElement>('[data-hc]').forEach((b) => b.addEventListener('click', () => hcAction({ action: b.dataset.hc! })));
+  fixForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    void hcAction({ action: 'link', url: (fixForm.elements.namedItem('url') as HTMLInputElement).value });
   });
 
   const box = document.getElementById('cover') as HTMLElement;

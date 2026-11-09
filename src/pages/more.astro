@@ -11,6 +11,13 @@ const { results: unmatched } = await db()
       ORDER BY s.name COLLATE NOCASE`,
   )
   .all<{ name: string; sync_note: string | null }>();
+const { results: unsure } = await db()
+  .prepare(
+    `SELECT w.id, w.title, w.author, ts.matched_title, ts.matched_author, ts.hc_slug
+       FROM tag_sync ts JOIN works w ON w.id = ts.work_id
+      WHERE ts.status = 'uncertain' ORDER BY w.author_sort COLLATE NOCASE, w.sort_title`,
+  )
+  .all<{ id: number; title: string; author: string | null; matched_title: string | null; matched_author: string | null; hc_slug: string | null }>();
 ---
 
 <Layout title="More">
@@ -37,6 +44,42 @@ const { results: unmatched } = await db()
       <ol id="sync-log" class="mt-3 max-h-64 space-y-0.5 overflow-y-auto text-sm"></ol>
     </section>
 
+    <section aria-labelledby="tg" class="rounded-lg border border-rule bg-card p-5">
+      <h2 id="tg" class="font-serif text-xl font-semibold">Genres &amp; moods</h2>
+      <p class="mt-1 text-sm text-ink-soft">
+        Reader genres, moods and tags from Hardcover, so you can search “horror” or “dark romance”. They never change where a book is shelved.
+        This runs in the background about 8 books a minute, so you don't need to keep this page open. Every book is re-checked every few months.
+      </p>
+      <dl class="mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+        <dt class="text-ink-soft">Checked</dt><dd id="tg-checked">…</dd>
+        <dt class="text-ink-soft">Books with genres</dt><dd id="tg-tagged">…</dd>
+        <dt class="text-ink-soft">Matches to check</dt><dd id="tg-unsure">…</dd>
+        <dt class="text-ink-soft">Not on Hardcover</dt><dd id="tg-missing">…</dd>
+      </dl>
+      <p class="mt-3 text-sm"><a href="/?f=notags" class="font-medium text-green hover:underline">Books without genres yet</a> <span class="text-ink-soft">(add your own tags on each book's page)</span></p>
+    </section>
+
+    {unsure.length > 0 && (
+      <section aria-labelledby="us">
+        <h2 id="us" class="font-serif text-xl font-semibold">Are these the same book?</h2>
+        <p class="mt-1 text-sm text-ink-soft">Hardcover found a close but not certain match. Their genres are already showing; say no to remove them. You can link the right Hardcover book from the book's page.</p>
+        <ul id="unsure" class="mt-3 divide-y divide-rule rounded-lg border border-rule bg-card text-sm">
+          {unsure.map((u) => (
+            <li class="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3" data-work={u.id}>
+              <div class="min-w-0 flex-1">
+                <a href={`/book/${u.id}`} class="font-medium hover:text-green">{u.title}</a>{u.author && <span class="text-ink-soft"> by {u.author}</span>}
+                <span class="block text-ink-soft">Hardcover: {u.hc_slug ? <a class="underline" href={`https://hardcover.app/books/${u.hc_slug}`} target="_blank" rel="noopener">{u.matched_title}</a> : u.matched_title}{u.matched_author && ` by ${u.matched_author}`}</span>
+              </div>
+              <span class="flex gap-2">
+                <button type="button" data-act="confirm" class="rounded-md bg-green px-3 py-1 font-medium text-paper">Yes</button>
+                <button type="button" data-act="reject" class="rounded-md border border-rule px-3 py-1 font-medium">No</button>
+              </span>
+            </li>
+          ))}
+        </ul>
+      </section>
+    )}
+
     {unmatched.length > 0 && (
       <section aria-labelledby="nm">
         <h2 id="nm" class="font-serif text-xl font-semibold">Series Hardcover couldn't match</h2>
@@ -52,7 +95,11 @@ const { results: unmatched } = await db()
 </Layout>
 
 <script>
-  interface Status { configured: boolean; user: string | null; error: string | null; sync: { eligible: number; matched: number; unmatched: number; due: number } }
+  interface Status {
+    configured: boolean; user: string | null; error: string | null;
+    sync: { eligible: number; matched: number; unmatched: number; due: number };
+    tags: { total: number; checked: number; matched: number; uncertain: number; missing: number; due: number; tagged: number };
+  }
   const $ = (id: string) => document.getElementById(id)!;
   const btn = $('sync') as HTMLButtonElement;
   const log = $('sync-log');
@@ -63,9 +110,17 @@ const { results: unmatched } = await db()
     $('hc-due').textContent = String(s.due);
   }
 
+  function showTags(t: Status['tags']) {
+    $('tg-checked').textContent = `${t.checked.toLocaleString()} of ${t.total.toLocaleString()}${t.checked < t.total ? ` (about ${Math.ceil((t.total - t.checked) / 8 / 60)} hr to go)` : ''}`;
+    $('tg-tagged').textContent = t.tagged.toLocaleString();
+    $('tg-unsure').textContent = t.uncertain.toLocaleString();
+    $('tg-missing').textContent = t.missing.toLocaleString();
+  }
+
   async function load() {
     const s = (await (await fetch('/api/hardcover/status')).json()) as Status;
     show(s.sync);
+    showTags(s.tags);
     if (!s.configured) $('hc-conn').textContent = 'Not set up. Add the token with: npx wrangler secret put HARDCOVER_TOKEN';
     else if (s.error) $('hc-conn').textContent = `Error: ${s.error}`;
     else {
@@ -80,7 +135,12 @@ const { results: unmatched } = await db()
     btn.textContent = 'Syncing…';
     for (;;) {
       const res = await fetch('/api/series/sync', { method: 'POST' });
-      const j = (await res.json().catch(() => ({ error: `HTTP ${res.status}` }))) as { results?: { series: string; ok: boolean; note: string; entries?: number }[]; status?: Status['sync']; stopped?: boolean; error?: string };
+      const j = (await res.json().catch(() => ({ error: `HTTP ${res.status}` }))) as { results?: { series: string; ok: boolean; note: string; entries?: number }[]; status?: Status['sync']; stopped?: boolean; busy?: boolean; error?: string };
+      if (j.busy) {
+        // The background sync has Hardcover for a few seconds; wait our turn.
+        await new Promise((r) => setTimeout(r, 15000));
+        continue;
+      }
       if (!res.ok || !j.results) {
         log.insertAdjacentHTML('beforeend', `<li class="text-[#a23b2a]">${j.error ?? 'Sync failed.'}</li>`);
         break;
@@ -104,4 +164,15 @@ const { results: unmatched } = await db()
   });
 
   void load();
+  setInterval(() => { if (!document.hidden) void load(); }, 60000);
+
+  document.getElementById('unsure')?.addEventListener('click', async (e) => {
+    const b = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-act]');
+    const li = b?.closest<HTMLElement>('[data-work]');
+    if (!b || !li) return;
+    b.disabled = true;
+    const res = await fetch(`/api/works/${li.dataset.work}/hardcover`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: b.dataset.act }) });
+    if (res.ok) li.remove();
+    else b.disabled = false;
+  });
 </script>

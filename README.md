@@ -41,6 +41,15 @@ npm run deploy
 
 Then open **More → Sync series now**. Each owned series (except Children's and Graphic Novels/Manga) is matched on Hardcover and its book list stored in `series_entries`; series are re-checked weekly. Scanning a book in Add mode also pre-fills its series and number from Hardcover.
 
+## Genres, moods and tags (search only)
+
+Hardcover's reader genres, moods, tags and content warnings are copied into `work_tags` (`src/lib/tagSync.ts`) so the library search finds "horror" or "dark romance". Shelving never changes.
+
+- **Background:** `src/worker.ts` wraps Astro's handler and adds a `scheduled` handler; the cron in `wrangler.jsonc` runs every minute. Each run takes the Hardcover lock (`app_state.hc_lock`, shared with the series sync button), then does 8 books (search by title + author, then one `cached_tags` request for the batch). When no books are due it does the weekly series refresh instead.
+- **Matching:** title and author agree = matched; close but not certain = uncertain (tags applied, listed on More for Yes/No). Books are re-checked every 90 days and misses every 60.
+- **Fixes:** each book page can add/remove tags (our own are category `ours`; removed Hardcover tags stay `hidden` so a re-sync won't restore them), confirm a match, paste the right Hardcover link, or mark "not on Hardcover".
+- Progress: More → Genres & moods, or Workers logs (observability is on).
+
 ## First deploy (one time)
 
 ```bash

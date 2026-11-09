@@ -3,7 +3,9 @@
 	"name": "home-library",
 	"compatibility_date": "2026-09-30",
 	"compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
-	"main": "@astrojs/cloudflare/entrypoints/server",
+	"main": "./src/worker.ts",
+	// Every minute: background Hardcover sync (genres/moods, weekly series refresh). Idle runs are one quick query.
+	"triggers": { "crons": ["* * * * *"] },
 	"assets": { "directory": "./dist", "binding": "ASSETS" },
 	"d1_databases": [
 		{
