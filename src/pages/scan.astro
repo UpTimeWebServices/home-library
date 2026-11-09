@@ -284,12 +284,14 @@ const mode = ['verify', 'add', 'check'].includes(Astro.url.searchParams.get('mod
     const options = l.candidates.filter((c) => c.unverifiedCopyId);
     if (!options.length) {
       result.innerHTML =
-        panel(`<p class="text-sm font-medium text-brass">Not found in the catalog</p>${foundLine(l.found, l.isbn)}<p class="mt-2 text-sm text-ink-soft">It may be listed under a different title, or it was missed when the shelves were photographed.</p>
-        <button type="button" id="to-add" class="mt-3 font-medium text-green hover:underline">Add it as a new book</button>`, 'warn') + again;
+        panel(`<p class="text-sm font-medium text-brass">No catalog entry with this title</p>${foundLine(l.found, l.isbn)}<p class="mt-2 text-sm text-ink-soft">The catalog may list it under a different name. Find it below and this scan is attached to it.</p>
+        ${librarySearch(l.found?.title ?? '')}
+        <button type="button" id="to-add" class="mt-4 font-medium text-green hover:underline">It's not in the library: add it as a new book</button>`, 'warn') + again;
       document.getElementById('to-add')?.addEventListener('click', () => {
         setMode('add', true);
-        renderAdd(l);
+        renderAddForm();
       });
+      wireLibrarySearch(l, 'verify');
       return;
     }
     result.innerHTML = `${panel(`<div class="flex gap-3">${l.found ? thumb(l.found.coverId, l.found.coverUrl, null) : ''}<div>${foundLine(l.found, l.isbn)}</div></div>`)}
@@ -299,7 +301,12 @@ const mode = ['verify', 'add', 'check'].includes(Astro.url.searchParams.get('mod
           <button type="button" data-verify="${c.unverifiedCopyId}" class="mt-3 w-full rounded-lg bg-green py-2.5 font-medium text-paper">Yes, this one</button>`)}</li>`)
         .join('')}</ul>
       <button type="button" data-act="again" class="mt-4 w-full rounded-lg border border-rule py-3 font-medium">None of these, scan another</button>`;
-    result.querySelectorAll<HTMLButtonElement>('[data-verify]').forEach((b) =>
+    wireVerify(l);
+  }
+
+  /** "Yes, this one": attach the scanned edition to that catalog copy. */
+  function wireVerify(l: Lookup) {
+    result.querySelectorAll<HTMLButtonElement>('[data-verify]:not([data-wired])').forEach((b) =>
       b.addEventListener('click', async () => {
         b.disabled = true;
         b.textContent = 'Saving…';
@@ -327,6 +334,38 @@ const mode = ['verify', 'add', 'check'].includes(Astro.url.searchParams.get('mod
         wireCopyFlags(result);
       }),
     );
+    result.querySelectorAll<HTMLElement>('[data-verify]').forEach((b) => (b.dataset.wired = '1'));
+  }
+
+  // ---------- Find a catalog entry by hand (titles typed from shelf photos don't always match the publisher's) ----------
+  function librarySearch(guess: string) {
+    const q = guess.replace(/\s*[:(].*$/, '').trim();
+    return `<form id="lib-search" class="mt-3 flex gap-2">
+        <input name="q" value="${esc(q)}" placeholder="Title or author in the library" class="h-11 min-w-0 flex-1 rounded-lg border border-rule bg-paper px-3 text-base" />
+        <button class="rounded-lg border border-green px-4 font-medium text-green">Find</button>
+      </form>
+      <ul id="lib-results" class="mt-3 space-y-2"></ul>`;
+  }
+
+  function wireLibrarySearch(l: Lookup, purpose: 'verify' | 'add') {
+    const form = document.getElementById('lib-search') as HTMLFormElement | null;
+    const list = document.getElementById('lib-results')!;
+    if (!form) return;
+    const run = async () => {
+      const q = (form.elements.namedItem('q') as HTMLInputElement).value.trim();
+      if (!q) return;
+      list.innerHTML = '<li class="text-sm text-ink-soft">Searching…</li>';
+      const { results } = (await (await fetch(`/api/scan/search?q=${encodeURIComponent(q)}`)).json()) as { results: WorkHit[] };
+      if (!results.length) { list.innerHTML = '<li class="text-sm text-ink-soft">Nothing in the library matches. Try fewer words, or just the author.</li>'; return; }
+      list.innerHTML = results.map((c) => `<li class="rounded-lg border border-rule bg-paper p-3"><div class="flex gap-3">${thumb(c.coverId, c.coverUrl, c.section, 'w-10')}<div class="min-w-0 flex-1"><p class="font-medium">${esc(c.title)}</p><p class="text-sm text-ink-soft">${esc(c.author)}</p><p class="mt-1 text-sm text-brass">${esc(placeText(c))}</p></div></div>
+        ${c.unverifiedCopyId
+          ? `<button type="button" data-verify="${c.unverifiedCopyId}" class="mt-2 w-full rounded-lg bg-green py-2 font-medium text-paper">${purpose === 'add' ? 'That’s it: attach this scan' : 'This one'}</button>`
+          : `<p class="mt-2 text-sm text-ink-soft">Already scanned${c.copies > 1 ? ' (all copies)' : ''}.</p>${purpose === 'add' ? `<button type="button" data-copy="${c.workId}" class="mt-2 w-full rounded-lg border border-green py-2 font-medium text-green">Add another copy</button>` : ''}`}</li>`).join('');
+      wireVerify(l);
+      list.querySelectorAll<HTMLButtonElement>('[data-copy]').forEach((b) => b.addEventListener('click', () => renderAddForm(Number(b.dataset.copy))));
+    };
+    form.addEventListener('submit', (e) => { e.preventDefault(); void run(); });
+    void run();
   }
 
   function alertBox(msg: string) {
@@ -336,7 +375,20 @@ const mode = ['verify', 'add', 'check'].includes(Astro.url.searchParams.get('mod
   // ---------- Add ----------
   function renderAdd(l: Lookup) {
     const strong = [...new Map([...l.owned.map((c) => [c.workId, { workId: c.workId, title: c.title, place: placeText(c) }] as const), ...l.candidates.filter((c) => c.score >= 2).map((c) => [c.workId, { workId: c.workId, title: c.title, place: placeText(c) }] as const)]).values()];
-    if (!strong.length) return renderAddForm();
+    if (!strong.length) {
+      // Close-but-not-exact catalog titles: ask before creating a duplicate.
+      const possible = l.candidates.filter((c) => c.score === 1);
+      if (!possible.length) return renderAddForm();
+      result.innerHTML = panel(
+        `<p class="text-sm font-medium text-brass">Is it already in the library under another name?</p>${foundLine(l.found, l.isbn)}
+         ${librarySearch(l.found?.title ?? '')}
+         <button type="button" id="different" class="mt-4 w-full rounded-lg bg-green py-2.5 font-medium text-paper">No, it's a new book</button>`,
+        'warn',
+      );
+      $('different').addEventListener('click', () => renderAddForm());
+      wireLibrarySearch(l, 'add');
+      return;
+    }
     result.innerHTML = panel(
       `<p class="text-sm font-medium text-brass">You already have this title</p>${foundLine(l.found, l.isbn)}
        <ul class="mt-2 space-y-1">${strong.map((s) => `<li><a class="text-brass underline-offset-2 hover:underline" href="/book/${s.workId}">${esc(s.place)}</a></li>`).join('')}</ul>

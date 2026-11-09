@@ -3,7 +3,7 @@
  * Toggles save as soon as they're tapped; the note saves on its button. Used on the Verify
  * scan result and on each copy of the book page.
  */
-export interface CopyFlags { id: number; special: 'none' | 'suspected' | 'confirmed'; first_edition: number; signed: number; notes: string | null }
+export interface CopyFlags { id: number; isbn?: string | null; special: 'none' | 'suspected' | 'confirmed'; first_edition: number; signed: number; notes: string | null }
 
 const esc = (s: string | null) => (s ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
@@ -25,6 +25,11 @@ export function copyFlagsHtml(f: CopyFlags): string {
         class="h-10 min-w-0 flex-1 rounded-lg border border-rule bg-paper px-3 text-base" />
       <button type="button" data-save-note hidden class="rounded-lg border border-green px-3 text-sm font-medium text-green">Save</button>
     </div>
+    ${f.isbn === undefined ? '' : `<div class="mt-2 flex gap-2">
+      <input data-isbn value="${esc(f.isbn ?? '')}" inputmode="numeric" maxlength="20" placeholder="ISBN (10 or 13 digits)"
+        class="h-10 min-w-0 flex-1 rounded-lg border border-rule bg-paper px-3 text-base" />
+      <button type="button" data-save-isbn hidden class="rounded-lg border border-green px-3 text-sm font-medium text-green">Save ISBN</button>
+    </div>`}
     <p data-msg class="mt-1 text-xs text-ink-soft" aria-live="polite"></p>
   </div>`;
 }
@@ -41,7 +46,7 @@ export function wireCopyFlags(root: ParentNode, onChange?: (f: CopyFlags) => voi
     async function save(body: Record<string, unknown>) {
       msg.textContent = 'Saving…';
       const res = await fetch(`/api/copies/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-      if (!res.ok) { msg.textContent = 'Could not save. Try again.'; return null; }
+      if (!res.ok) { msg.textContent = ((await res.json().catch(() => ({}))) as { error?: string }).error ?? 'Could not save. Try again.'; return null; }
       const f = (await res.json()) as CopyFlags;
       msg.textContent = 'Saved';
       onChange?.(f);
@@ -67,5 +72,17 @@ export function wireCopyFlags(root: ParentNode, onChange?: (f: CopyFlags) => voi
     const commit = async () => { if (!saveNote.hidden && (await save({ notes: note.value }))) saveNote.hidden = true; };
     saveNote.addEventListener('click', commit);
     note.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); void commit(); } });
+
+    const isbn = box.querySelector<HTMLInputElement>('[data-isbn]');
+    const saveIsbn = box.querySelector<HTMLButtonElement>('[data-save-isbn]');
+    if (isbn && saveIsbn) {
+      isbn.addEventListener('input', () => (saveIsbn.hidden = false));
+      const commitIsbn = async () => {
+        const f = await save({ isbn: isbn.value });
+        if (f) { isbn.value = f.isbn ?? ''; saveIsbn.hidden = true; msg.textContent = f.isbn ? 'Saved. Scanning this book now finds it.' : 'Saved'; }
+      };
+      saveIsbn.addEventListener('click', commitIsbn);
+      isbn.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); void commitIsbn(); } });
+    }
   });
 }

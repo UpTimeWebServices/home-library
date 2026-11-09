@@ -151,7 +151,7 @@ const flagText = (c: (typeof copies)[number]) =>
                   {c.notes && <p class="mt-2 text-sm">{c.notes}</p>}
                   <button type="button" data-copy-edit={c.id} class="mt-2 text-sm font-medium text-green hover:underline">Edition details</button>
                   <div data-copy-slot={c.id} hidden class="mt-3 border-t border-rule pt-3"
-                       set:html={copyFlagsHtml({ id: c.id, special: c.special, first_edition: c.first_edition, signed: c.signed, notes: c.notes })} />
+                       set:html={copyFlagsHtml({ id: c.id, isbn: c.isbn, special: c.special, first_edition: c.first_edition, signed: c.signed, notes: c.notes })} />
                 </li>
               );
             })}
