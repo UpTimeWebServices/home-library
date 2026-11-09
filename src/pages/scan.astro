@@ -58,6 +58,10 @@ const mode = ['verify', 'add', 'check'].includes(Astro.url.searchParams.get('mod
   import type { Found } from '@/lib/lookup';
   import type { CopyHit, WorkHit } from '@/lib/match';
   import type { Placement } from '@/lib/filing';
+  import { copyFlagsHtml, wireCopyFlags, type CopyFlags } from '@/lib/copyFlags';
+
+  const flagsPanel = (f: CopyFlags) =>
+    `<div class="mt-4 border-t border-rule pt-3"><p class="mb-2 text-sm font-medium">About this copy</p>${copyFlagsHtml(f)}</div>`;
 
   interface Lookup {
     isbn: string | null;
@@ -265,7 +269,16 @@ const mode = ['verify', 'add', 'check'].includes(Astro.url.searchParams.get('mod
   function renderVerify(l: Lookup) {
     const already = l.owned.filter((c) => c.verified);
     if (already.length) {
-      result.innerHTML = panel(`<p class="text-sm font-medium text-green">Already verified</p>${foundLine(l.found, l.isbn)}<p class="mt-2 text-lg font-medium text-brass">${esc(placeText(already[0]!))}</p>`, 'ok') + again;
+      const c = already[0]!;
+      result.innerHTML = panel(`<p class="text-sm font-medium text-green">Already verified</p>${foundLine(l.found, l.isbn)}<p class="mt-2 text-lg font-medium text-brass">${esc(placeText(c))}</p><div id="flags-slot"></div>`, 'ok') + again;
+      // Edition details can still be set or fixed after verifying.
+      fetch(`/api/copies/${c.copyId}`)
+        .then((r) => (r.ok ? (r.json() as Promise<CopyFlags>) : null))
+        .then((f) => {
+          const slot = document.getElementById('flags-slot');
+          if (f && slot) { slot.innerHTML = flagsPanel(f); wireCopyFlags(slot); }
+        })
+        .catch(() => {});
       return;
     }
     const options = l.candidates.filter((c) => c.unverifiedCopyId);
@@ -296,7 +309,7 @@ const mode = ['verify', 'add', 'check'].includes(Astro.url.searchParams.get('mod
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ copyId: Number(b.dataset.verify), isbn: l.isbn, publisher: f?.publisher, year: f?.year, pages: f?.pages, coverId: f?.coverId, coverUrl: f?.coverUrl }),
         });
-        const j = (await res.json()) as { now?: string; planned?: string | null; workId?: number; error?: string };
+        const j = (await res.json()) as { now?: string; planned?: string | null; workId?: number; copy?: CopyFlags; error?: string };
         if (!res.ok) {
           b.disabled = false;
           b.textContent = 'Yes, this one';
@@ -307,9 +320,11 @@ const mode = ['verify', 'add', 'check'].includes(Astro.url.searchParams.get('mod
           `<p class="text-sm font-medium text-green">Verified</p>${foundLine(l.found, l.isbn)}
            <p class="mt-3 text-sm text-ink-soft">Lives on</p><p class="text-lg font-medium text-brass">${esc(j.now)}</p>
            ${j.planned && j.planned !== j.now ? `<p class="mt-2 text-sm text-ink-soft">Moves to ${esc(j.planned)} in the re-file</p>` : ''}
-           <a href="/book/${j.workId}" class="mt-2 inline-block text-sm text-green underline">Open book</a>`,
+           ${j.copy ? flagsPanel(j.copy) : ''}
+           <a href="/book/${j.workId}" class="mt-3 inline-block text-sm text-green underline">Open book</a>`,
           'ok',
         ) + again;
+        wireCopyFlags(result);
       }),
     );
   }

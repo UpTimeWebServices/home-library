@@ -2,6 +2,7 @@
 import Layout from '@/layouts/Layout.astro';
 import { db, workDetail } from '@/lib/db';
 import { clothFor, coverUrl, placeText, samePlace } from '@/lib/format';
+import { copyFlagsHtml } from '@/lib/copyFlags';
 
 const id = Number(Astro.params.id);
 const detail = Number.isInteger(id) ? await workDetail(id) : null;
@@ -148,6 +149,9 @@ const flagText = (c: (typeof copies)[number]) =>
                     {c.verified ? `ISBN ${c.isbn}` : 'From the catalog spreadsheet, not scanned yet'}
                   </p>
                   {c.notes && <p class="mt-2 text-sm">{c.notes}</p>}
+                  <button type="button" data-copy-edit={c.id} class="mt-2 text-sm font-medium text-green hover:underline">Edition details</button>
+                  <div data-copy-slot={c.id} hidden class="mt-3 border-t border-rule pt-3"
+                       set:html={copyFlagsHtml({ id: c.id, special: c.special, first_edition: c.first_edition, signed: c.signed, notes: c.notes })} />
                 </li>
               );
             })}
@@ -247,6 +251,8 @@ const flagText = (c: (typeof copies)[number]) =>
 </Layout>
 
 <script>
+  import { wireCopyFlags } from '@/lib/copyFlags';
+
   // Back keeps the library's search and filters when we came from it.
   const back = document.getElementById('back') as HTMLAnchorElement;
   if (document.referrer.startsWith(location.origin + '/') && !document.referrer.includes('/book/')) {
@@ -273,6 +279,17 @@ const flagText = (c: (typeof copies)[number]) =>
     if (res.ok) location.reload();
     else document.getElementById('edit-error')!.textContent = ((await res.json().catch(() => ({}))) as { error?: string }).error ?? 'Could not save.';
   });
+
+  // ---- edition details per copy ----
+  document.querySelectorAll<HTMLButtonElement>('[data-copy-edit]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const slot = document.querySelector<HTMLElement>(`[data-copy-slot="${b.dataset.copyEdit}"]`)!;
+      slot.hidden = !slot.hidden;
+      b.textContent = slot.hidden ? 'Edition details' : 'Done';
+      if (slot.hidden) location.reload();
+      else wireCopyFlags(slot);
+    }),
+  );
 
   // ---- tags ----
   const workId = (document.getElementById('cover') as HTMLElement).dataset.id;

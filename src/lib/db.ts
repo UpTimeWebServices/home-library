@@ -23,7 +23,7 @@ export async function libraryRows(): Promise<LibRow[]> {
               s.name AS series, w.series_pos, w.cover_id, w.cover_status,
               sh.room, sh.case_label, sh.shelf_label,
               (SELECT COUNT(*) FROM copies c WHERE c.work_id = w.id) AS n,
-              (SELECT MAX(CASE c.special WHEN 'confirmed' THEN 2 WHEN 'suspected' THEN 1 ELSE 0 END)
+              (SELECT MAX(CASE WHEN c.special = 'confirmed' OR c.signed = 1 OR c.first_edition = 1 THEN 2 WHEN c.special = 'suspected' THEN 1 ELSE 0 END)
                  FROM copies c WHERE c.work_id = w.id) AS sp,
               (c1.planned_shelf_id IS NOT NULL AND c1.planned_shelf_id <> c1.shelf_id) AS moves,
               w.cover_url,

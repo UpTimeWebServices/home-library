@@ -18,13 +18,13 @@ export const POST: APIRoute = async ({ request, locals }) => {
   const d = db();
   const copy = await d
     .prepare(
-      `SELECT c.work_id, w.cover_url, sh.room, sh.case_label, sh.shelf_label, ps.room AS p_room, ps.case_label AS p_case_label, ps.shelf_label AS p_shelf_label
+      `SELECT c.work_id, c.special, c.first_edition, c.signed, c.notes, w.cover_url, sh.room, sh.case_label, sh.shelf_label, ps.room AS p_room, ps.case_label AS p_case_label, ps.shelf_label AS p_shelf_label
          FROM copies c JOIN works w ON w.id = c.work_id
          LEFT JOIN shelves sh ON sh.id = c.shelf_id LEFT JOIN shelves ps ON ps.id = c.planned_shelf_id
         WHERE c.id = ?`,
     )
     .bind(copyId)
-    .first<{ work_id: number; cover_url: string | null; room: string | null; case_label: string | null; shelf_label: string | null; p_room: string | null; p_case_label: string | null; p_shelf_label: string | null }>();
+      .first<{ work_id: number; special: 'none' | 'suspected' | 'confirmed'; first_edition: number; signed: number; notes: string | null; cover_url: string | null; room: string | null; case_label: string | null; shelf_label: string | null; p_room: string | null; p_case_label: string | null; p_shelf_label: string | null }>();
   if (!copy) return json({ error: 'That copy is no longer in the catalog.' }, 404);
 
   const ownPhoto = copy.cover_url?.startsWith('/api/cover-image/') ?? false;
@@ -44,6 +44,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
   return json({
     ok: true,
     workId: copy.work_id,
+    copy: { id: copyId, special: copy.special, first_edition: copy.first_edition, signed: copy.signed, notes: copy.notes },
     now: placeText(copy),
     planned: copy.p_room ? placeText({ room: copy.p_room, case_label: copy.p_case_label, shelf_label: copy.p_shelf_label }) : null,
   });
