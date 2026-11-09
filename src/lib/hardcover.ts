@@ -298,3 +298,24 @@ export async function englishTitles(bookIds: number[]): Promise<Map<number, stri
   for (const e of d.editions) if (e.title) out.set(e.book_id, cleanEditionTitle(e.title));
   return out;
 }
+
+/* ───────────── Covers ───────────── */
+
+/** Cover image for an ISBN's edition (or its book's main cover), from Hardcover. Good for comics and recent books. */
+export async function hcCoverForIsbn(isbn13: string): Promise<string | null> {
+  const d = await hc<{ editions: { image: { url: string | null } | null; book: { image: { url: string | null } | null } | null }[] }>(
+    'query ($i: String!) { editions(where: {isbn_13: {_eq: $i}}, limit: 1) { image { url } book { image { url } } } }',
+    { i: isbn13 },
+  );
+  const e = d.editions[0];
+  return e?.image?.url ?? e?.book?.image?.url ?? null;
+}
+
+/** A Hardcover book's main cover. */
+export async function hcCoverForBook(bookId: number): Promise<string | null> {
+  const d = await hc<{ books: { image: { url: string | null } | null }[] }>(
+    'query ($id: Int!) { books(where: {id: {_eq: $id}}, limit: 1) { image { url } } }',
+    { id: bookId },
+  );
+  return d.books[0]?.image?.url ?? null;
+}

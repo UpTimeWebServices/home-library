@@ -8,6 +8,7 @@ import type { APIRoute } from 'astro';
 import { db } from '@/lib/db';
 import { json, str } from '@/lib/http';
 import { toIsbn13 } from '@/lib/books';
+import { refreshCover } from '@/lib/covers';
 
 const COLS = 'id, isbn, verified, special, first_edition, signed, notes';
 
@@ -44,5 +45,10 @@ export const PATCH: APIRoute = async ({ params, request, locals }) => {
     d.prepare('INSERT INTO activity (user, action, target) VALUES (?, ?, ?)').bind(locals.user?.name ?? null, 'copy_edit', `copy:${id}`),
     d.prepare(`SELECT ${COLS} FROM copies WHERE id = ?`).bind(id),
   ]);
+  // A typed ISBN usually means a better cover is findable: look now (never replaces your own photo).
+  if ('isbn' in b && vals.length) {
+    const w = await d.prepare('SELECT work_id FROM copies WHERE id = ?').bind(id).first<{ work_id: number }>();
+    if (w) await refreshCover(w.work_id).catch(() => null);
+  }
   return json(row?.results?.[0] ?? { ok: true });
 };

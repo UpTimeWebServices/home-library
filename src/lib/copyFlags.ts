@@ -79,7 +79,7 @@ export function wireCopyFlags(root: ParentNode, onChange?: (f: CopyFlags) => voi
       isbn.addEventListener('input', () => (saveIsbn.hidden = false));
       const commitIsbn = async () => {
         const f = await save({ isbn: isbn.value });
-        if (f) { isbn.value = f.isbn ?? ''; saveIsbn.hidden = true; msg.textContent = f.isbn ? 'Saved. Scanning this book now finds it.' : 'Saved'; }
+        if (f) { isbn.value = f.isbn ?? ''; saveIsbn.hidden = true; msg.textContent = f.isbn ? 'Saved. Scanning this book now finds it. Reload to see its cover.' : 'Saved'; }
       };
       saveIsbn.addEventListener('click', commitIsbn);
       isbn.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); void commitIsbn(); } });

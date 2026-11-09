@@ -13,6 +13,17 @@
 import type { APIRoute } from 'astro';
 import { env } from 'cloudflare:workers';
 import { db } from '@/lib/db';
+import { refreshCover } from '@/lib/covers';
+
+/** PUT /api/cover/:workId — look for a better cover now (ISBN editions first). Your own photo is kept. */
+export const PUT: APIRoute = async ({ params, locals }) => {
+  const id = Number(params.id);
+  if (!Number.isInteger(id)) return json({ error: 'Bad id' }, 400);
+  const r = await refreshCover(id);
+  if (!r) return json({ error: 'Not found' }, 404);
+  await db().prepare('INSERT INTO activity (user, action, target) VALUES (?, ?, ?)').bind(locals.user?.name ?? null, 'cover_refresh', `work:${id}`).run();
+  return json(r);
+};
 
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), {

@@ -73,6 +73,7 @@ const flagText = (c: (typeof copies)[number]) =>
             <input id="cover-file" type="file" accept="image/*" class="sr-only" />
           </label>
           {ownPhoto && <button type="button" id="cover-remove" class="text-ink-soft hover:text-ink hover:underline">Remove photo</button>}
+          {!ownPhoto && <button type="button" id="cover-refresh" class="text-ink-soft hover:text-ink hover:underline">Find the cover again</button>}
         </div>
         <p id="cover-msg" class="mt-1 text-xs text-ink-soft" aria-live="polite">
           {work.cover_status === 'found' && !ownPhoto && 'Cover is a best match from Open Library. If it is the wrong edition, add a photo of yours.'}
@@ -396,6 +397,16 @@ const flagText = (c: (typeof copies)[number]) =>
       busy.hidden = true;
       fileEl.value = '';
     }
+  });
+
+  document.getElementById('cover-refresh')?.addEventListener('click', async (e) => {
+    const b = e.currentTarget as HTMLButtonElement;
+    b.disabled = true;
+    b.textContent = 'Looking…';
+    const res = await fetch(`/api/cover/${id}`, { method: 'PUT' });
+    const j = (await res.json().catch(() => ({}))) as { source?: string | null };
+    if (res.ok && j.source) location.reload();
+    else { b.disabled = false; b.textContent = 'Find the cover again'; msg.textContent = 'No cover found online. Add a photo of yours instead.'; }
   });
 
   document.getElementById('cover-remove')?.addEventListener('click', async () => {
