@@ -8,7 +8,7 @@ import tailwindcss from '@tailwindcss/vite';
  * Fully server-rendered on a Cloudflare Worker (D1 for data). Access protects the whole site.
  */
 export default defineConfig({
-  site: 'https://home-library.aron-da0.workers.dev',
+  site: 'https://dreamhouselibrary.com',
   output: 'server',
   adapter: cloudflare({ imageService: 'passthrough' }),
   session: false,

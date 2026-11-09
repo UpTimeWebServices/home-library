@@ -6,6 +6,11 @@
 	"main": "./src/worker.ts",
 	// Every minute: background Hardcover sync (genres/moods, weekly series refresh). Idle runs are one quick query.
 	"triggers": { "crons": ["* * * * *"] },
+	// dreamhouselibrary.com (www redirects to it via a zone redirect rule). workers.dev stays on as a backup address.
+	"routes": [
+		{ "pattern": "dreamhouselibrary.com", "custom_domain": true },
+		{ "pattern": "www.dreamhouselibrary.com", "custom_domain": true }
+	],
 	"assets": { "directory": "./dist", "binding": "ASSETS" },
 	"d1_databases": [
 		{
