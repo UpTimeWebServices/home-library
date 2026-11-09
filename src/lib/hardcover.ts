@@ -127,6 +127,37 @@ const CATEGORY: Record<string, TagCategory> = { genre: 'genre', genres: 'genre',
 /** How many of each kind to keep, most-applied first. */
 export const TAG_LIMIT: Record<TagCategory, number> = { genre: 10, mood: 8, tag: 12, warning: 12 };
 
+/**
+ * Hardcover's tags are reader-entered and noisy. Dropped:
+ * - its review checkboxes ("Plot driven", "Unloveable Characters", "Weak Character Development"…),
+ *   which every reviewed book gets, often in contradictory pairs
+ * - shelf names imported from other apps ("did-not-finish", "Calibre Import", "reading list", "General")
+ * - one-person reader tags (personal shelves like "Living Room — Lit"); genres and moods are kept at any count
+ * Cleaned: stray JSON brackets/quotes ('["Fiction"'), and "books; thriller" style lists.
+ */
+const JUNK =
+  /^(a mix driven|plot driven|character driven|(not |un)?(diverse|loveable|lovable) characters|(strong|weak) character development|general|fiction|nonfiction|books?|ebooks?|kindle|audiobooks?|owned|own|library|wishlist|wish list|favou?rites?|calibre import|reading list|did[ -]?not[ -]?finish|dnf|to[ -]?read|tbr|currently[ -]?reading|read|re-?read|abandoned|unfinished|default|imported|goodreads)$/i;
+
+export function cleanTags(tags: HcTag[]): HcTag[] {
+  const out: HcTag[] = [];
+  const seen = new Set<string>();
+  const per: Record<string, number> = {};
+  for (const t of tags) {
+    if (t.weight !== null && t.weight < 1) continue;
+    if (t.category === 'tag' && t.weight !== null && t.weight < 2) continue;
+    for (const part of t.tag.split(/\s*;\s*/)) {
+      const tag = part.replace(/[\[\]"]/g, '').replace(/\s+/g, ' ').trim();
+      if (tag.length < 2 || tag.length > 60 || JUNK.test(tag)) continue;
+      const k = `${t.category}|${tag.toLowerCase()}`;
+      if (seen.has(k)) continue;
+      if ((per[t.category] = (per[t.category] ?? 0) + 1) > TAG_LIMIT[t.category]) continue;
+      seen.add(k);
+      out.push({ ...t, tag });
+    }
+  }
+  return out;
+}
+
 const strs = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
 
 interface BookDoc {
@@ -151,12 +182,12 @@ export async function searchBooks(q: string, perPage = 8): Promise<HcBookHit[]> 
       authors: strs(b.author_names),
       altTitles: strs(b.alternative_titles),
       usersCount: b.users_count ?? 0,
-      tags: [
+      tags: cleanTags([
         ...strs(b.genres).map((tag) => ({ category: 'genre' as const, tag, weight: null })),
         ...strs(b.moods).map((tag) => ({ category: 'mood' as const, tag, weight: null })),
         ...strs(b.tags).map((tag) => ({ category: 'tag' as const, tag, weight: null })),
         ...strs(b.content_warnings).map((tag) => ({ category: 'warning' as const, tag, weight: null })),
-      ],
+      ]),
     }));
 }
 
@@ -175,19 +206,14 @@ export function parseCachedTags(raw: unknown): HcTag[] {
   for (const [key, list] of Object.entries(v as Record<string, unknown>)) {
     const category = CATEGORY[key.toLowerCase()];
     if (!category || !Array.isArray(list)) continue;
-    const seen = new Set<string>();
     for (const item of list) {
       const tag = typeof item === 'string' ? item : (item as { tag?: unknown; name?: unknown })?.tag ?? (item as { name?: unknown })?.name;
       if (typeof tag !== 'string' || !tag.trim()) continue;
-      const k = tag.trim().toLowerCase();
-      if (seen.has(k)) continue;
-      seen.add(k);
       const count = typeof item === 'object' ? Number((item as { count?: unknown }).count) : NaN;
       out.push({ category, tag: tag.trim(), weight: Number.isFinite(count) ? count : null });
-      if (seen.size >= TAG_LIMIT[category]) break;
     }
   }
-  return out;
+  return cleanTags(out);
 }
 
 /** Full tag lists for several Hardcover books in one request. Null if Hardcover won't give them. */
