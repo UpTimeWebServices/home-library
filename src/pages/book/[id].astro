@@ -89,6 +89,7 @@ const flagText = (c: (typeof copies)[number]) =>
         ) : (
           <p class="mt-1 text-ink-soft">No author yet. <button type="button" data-edit="author" class="font-medium text-green hover:underline">Add the author</button></p>
         )}
+        {work.pub_year && <p class="mt-1 text-sm text-ink-soft">First published {work.pub_year}</p>}
         <p class="mt-3 flex flex-wrap items-center gap-2 text-sm">
           {work.section && (
             <a href={`/?s=${encodeURIComponent(work.section)}`} class="chip flex items-center gap-2">

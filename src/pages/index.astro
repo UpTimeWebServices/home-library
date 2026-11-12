@@ -56,6 +56,9 @@ const data = JSON.stringify(rows).replace(/</g, '\\u003c');
           <option value="author">By author</option>
           <option value="title">By title</option>
           <option value="shelf">By shelf</option>
+          <option value="published">Newest published</option>
+          <option value="oldest">Oldest published</option>
+          <option value="added">Recently added</option>
         </select>
         <div class="flex shrink-0 overflow-hidden rounded-md border border-rule" role="group" aria-label="View">
           <button type="button" id="view-grid" title="Covers" class="px-2 py-1.5 text-ink-soft aria-pressed:bg-green aria-pressed:text-paper" aria-pressed="true">
@@ -162,6 +165,12 @@ const data = JSON.stringify(rows).replace(/</g, '\\u003c');
     else if (state.sort === 'shelf') {
       const key = (r: LibRow) => `${r[10] ?? ''}|${(r[11] ?? '').padStart(4, '0')}|${(r[12] ?? '').padStart(4, '0')}`;
       matched.sort((a, b) => key(a).localeCompare(key(b)) || shelfOrder.get(a[0])! - shelfOrder.get(b[0])!);
+    } else if (state.sort === 'published' || state.sort === 'oldest') {
+      // Books with no known year go last either way; ties keep author order.
+      const dir = state.sort === 'oldest' ? 1 : -1;
+      matched.sort((a, b) => (a[18] === null ? 1 : 0) - (b[18] === null ? 1 : 0) || dir * ((a[18] ?? 0) - (b[18] ?? 0)) || shelfOrder.get(a[0])! - shelfOrder.get(b[0])!);
+    } else if (state.sort === 'added') {
+      matched.sort((a, b) => (b[19] ?? '').localeCompare(a[19] ?? '') || shelfOrder.get(a[0])! - shelfOrder.get(b[0])!);
     }
     const n = matched.length;
     countEl.textContent = `${n.toLocaleString()} ${n === 1 ? 'title' : 'titles'}`;
@@ -207,10 +216,16 @@ const data = JSON.stringify(rows).replace(/</g, '\\u003c');
     return `<div class="relative aspect-[2/3] overflow-hidden rounded-[3px] bg-rule shadow-[0_1px_0_rgb(0_0_0/0.06),2px_3px_8px_-4px_rgb(0_0_0/0.35)]" data-cover="${r[0]}" data-status="${r[9]}">${placeholder}${img}</div>`;
   }
 
+  const addedText = (d: string) =>
+    new Date(`${d}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+
   function card(r: LibRow): string {
     const href = `/book/${r[0]}`;
     const series = r[6] ? `<span class="block truncate text-ink-soft">${esc(r[6])}${r[7] !== null ? ` #${r[7]}` : ''}</span>` : '';
-    const extra = [r[13] > 1 ? `${r[13]} copies` : '', r[14] === 2 ? 'Special' : r[14] === 1 ? 'Special?' : ''].filter(Boolean).join(', ');
+    const when =
+      state.sort === 'published' || state.sort === 'oldest' ? (r[18] ? String(r[18]) : 'Year unknown')
+      : state.sort === 'added' && r[19] ? `Added ${addedText(r[19])}` : '';
+    const extra = [when, r[13] > 1 ? `${r[13]} copies` : '', r[14] === 2 ? 'Special' : r[14] === 1 ? 'Special?' : ''].filter(Boolean).join(', ');
     const place = esc(placeText({ room: r[10], case_label: r[11], shelf_label: r[12] }));
     if (state.view === 'list') {
       return `<li><a href="${href}" class="flex items-start gap-3 border-b border-rule py-3 hover:bg-card">
@@ -218,7 +233,7 @@ const data = JSON.stringify(rows).replace(/</g, '\\u003c');
         <div class="min-w-0 flex-1 text-sm">
           <span class="block truncate font-serif text-base font-medium">${esc(r[1])}</span>
           <span class="block truncate text-ink-soft">${esc(r[2])}</span>${series}
-          <span class="shelfmark mt-1">${place}</span>
+          <span class="shelfmark mt-1">${place}</span>${when ? `<span class="mt-1 block text-xs text-ink-soft">${when}</span>` : ''}
         </div>
       </a></li>`;
     }

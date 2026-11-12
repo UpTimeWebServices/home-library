@@ -1,16 +1,20 @@
 /**
  * Background Hardcover work, run every minute by the Worker's cron trigger:
- * genres/moods for books that need them first, then any series due their weekly refresh.
+ * publication years first (cheap), then genres/moods for books that need them, then any series
+ * due their weekly refresh.
  * Nobody needs to keep a page open. Each run is small (≤ ~20 Hardcover requests).
  */
 import { hardcoverConfigured } from './hardcover';
 import { withHardcoverLock } from './lock';
+import { pubYearBatch, pubYearDue } from './pubYear';
 import { syncBatch, syncStatus } from './seriesSync';
 import { tagBatch, tagStatus } from './tagSync';
 
 export async function backgroundSync(): Promise<void> {
   if (!hardcoverConfigured()) return;
   const run = await withHardcoverLock(async () => {
+    // Publication years: one request per 100 books, so the whole library is done in ~15 minutes.
+    if ((await pubYearDue()) > 0) return `years: ${await pubYearBatch(100)} books`;
     if ((await tagStatus()).due > 0) {
       const r = await tagBatch(8);
       return `tags: ${r.results.map((x) => `${x.title} [${x.status}, ${x.tags}]`).join('; ')}${r.error ? ` | stopped: ${r.error}` : ''}`;

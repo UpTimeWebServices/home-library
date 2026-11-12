@@ -6,7 +6,8 @@ export const db = (): D1Database => env.DB;
  * Compact row for the library grid, sent to the browser as JSON.
  * Tuple keeps ~1,400 rows small: [id, title, author, sortTitle, authorSort, section,
  * series, seriesPos, coverId, coverStatus, room, case, shelf, copies, special(0-2), moves(0/1), coverUrl,
- * tags ('|'-joined genres, moods, tags and our own; null if none)]
+ * tags ('|'-joined genres, moods, tags and our own; null if none),
+ * year first published (Hardcover; else a copy's edition year), date added (newest copy, YYYY-MM-DD, Mountain time)]
  */
 export type LibRow = [
   number, string, string | null, string, string | null, string | null,
@@ -14,6 +15,7 @@ export type LibRow = [
   string | null, string | null, string | null, number, number, number,
   string | null,
   string | null,
+  number | null, string | null,
 ];
 
 export async function libraryRows(): Promise<LibRow[]> {
@@ -28,7 +30,9 @@ export async function libraryRows(): Promise<LibRow[]> {
               (c1.planned_shelf_id IS NOT NULL AND c1.planned_shelf_id <> c1.shelf_id) AS moves,
               w.cover_url,
               (SELECT GROUP_CONCAT(t.tag, '|') FROM work_tags t
-                WHERE t.work_id = w.id AND t.hidden = 0 AND t.category <> 'warning') AS tags
+                WHERE t.work_id = w.id AND t.hidden = 0 AND t.category <> 'warning') AS tags,
+              COALESCE(w.pub_year, (SELECT MIN(c.year) FROM copies c WHERE c.work_id = w.id AND c.year > 0)) AS pub_year,
+              (SELECT substr(datetime(MAX(c.added_at), '-7 hours'), 1, 10) FROM copies c WHERE c.work_id = w.id) AS added
          FROM works w
          LEFT JOIN series s ON s.id = w.series_id
          LEFT JOIN copies c1 ON c1.id = (SELECT MIN(id) FROM copies WHERE work_id = w.id)
@@ -53,6 +57,7 @@ export interface WorkDetail {
   notes: string | null;
   created_by: string | null;
   created_at: string;
+  pub_year: number | null;
 }
 
 export interface CopyDetail {
